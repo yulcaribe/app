@@ -699,6 +699,8 @@ private fun BriefingScreen() {
     var requestToken by remember { mutableIntStateOf(0) }
     var loading by remember { mutableStateOf(false) }
     var briefing by remember { mutableStateOf<Briefing?>(null) }
+    var briefingCharts by remember { mutableStateOf(emptyGeoJson()) }
+    var briefingMapError by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) { apiOk = YcApi.catalogOk() }
@@ -707,6 +709,8 @@ private fun BriefingScreen() {
         if (requestToken == 0) return@LaunchedEffect
         loading = true
         error = null
+        briefingMapError = null
+
         val result = runCatching {
             YcApi.briefing(
                 from.trim().uppercase(),
@@ -716,12 +720,24 @@ private fun BriefingScreen() {
                 route.trim().uppercase()
             )
         }
-        result.onSuccess {
-            briefing = it
+
+        val data = result.getOrNull()
+        if (data != null) {
+            briefing = data
             apiOk = true
-        }.onFailure {
-            error = it.message ?: "Pilot Briefing request failed."
+
+            val mapResult = runCatching {
+                YcApi.chartViewport(
+                    routeViewport(data.route),
+                    setOf("airport", "airway")
+                )
+            }
+            briefingCharts = mapResult.getOrDefault(emptyGeoJson())
+            briefingMapError = mapResult.exceptionOrNull()?.message
+        } else {
+            error = result.exceptionOrNull()?.message ?: "Pilot Briefing request failed."
         }
+
         loading = false
     }
 
@@ -796,7 +812,11 @@ private fun BriefingScreen() {
         briefing?.let { data ->
             item {
                 Column(Modifier.padding(horizontal = 20.dp)) {
-                    RoutePreview(data.route)
+                    BriefingMap(
+                        points = data.route,
+                        chartsGeoJson = briefingCharts,
+                        error = briefingMapError
+                    )
                     Spacer(Modifier.height(18.dp))
 
                     BriefingTable(
@@ -937,52 +957,66 @@ private fun BriefField(
 }
 
 @Composable
-private fun RoutePreview(points: List<RoutePoint>) {
+private fun BriefingMap(
+    points: List<RoutePoint>,
+    chartsGeoJson: String,
+    error: String?
+) {
     Box(
         Modifier
             .fillMaxWidth()
-            .height(210.dp)
+            .height(260.dp)
             .background(Color(0xFF071017), RoundedCornerShape(6.dp))
             .border(1.dp, YcHairline, RoundedCornerShape(6.dp))
     ) {
-        Canvas(Modifier.fillMaxSize()) {
-            if (points.size < 2) return@Canvas
-            val minLon = points.minOf { it.lon }
-            val maxLon = points.maxOf { it.lon }
-            val minLat = points.minOf { it.lat }
-            val maxLat = points.maxOf { it.lat }
-            fun x(lon: Double): Float =
-                (((lon - minLon) / (maxLon - minLon).coerceAtLeast(0.001)) *
-                    size.width * 0.82 + size.width * 0.09).toFloat()
-            fun y(lat: Double): Float =
-                (size.height * 0.91 -
-                    ((lat - minLat) / (maxLat - minLat).coerceAtLeast(0.001)) *
-                    size.height * 0.82).toFloat()
+        NativeAviationMap(
+            center = null,
+            zoom = 4.0,
+            interactive = true,
+            chartsGeoJson = chartsGeoJson,
+            notamGeoJson = emptyGeoJson(),
+            flightsGeoJson = emptyGeoJson(),
+            routeGeoJson = routeGeoJson(points),
+            routePoints = points,
+            wafsFrame = null,
+            modifier = Modifier.fillMaxSize()
+        )
 
-            val path = Path()
-            points.forEachIndexed { index, p ->
-                if (index == 0) path.moveTo(x(p.lon), y(p.lat))
-                else path.lineTo(x(p.lon), y(p.lat))
-            }
-            drawPath(path, YcCyan, style = Stroke(width = 3f))
-            drawCircle(
-                YcCyanSoft,
-                7f,
-                androidx.compose.ui.geometry.Offset(x(points.first().lon), y(points.first().lat))
-            )
-            drawCircle(
-                YcCyanSoft,
-                7f,
-                androidx.compose.ui.geometry.Offset(x(points.last().lon), y(points.last().lat))
+        Surface(
+            color = Color(0xD90B1016),
+            border = androidx.compose.foundation.BorderStroke(1.dp, YcHairline),
+            shape = RoundedCornerShape(4.dp),
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(10.dp)
+        ) {
+            Text(
+                "LIVE ROUTE MAP",
+                color = YcCyan,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 9.sp,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
             )
         }
-        Text(
-            "LIVE ROUTE",
-            color = YcCyan,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 9.sp,
-            modifier = Modifier.padding(12.dp)
-        )
+
+        if (error != null) {
+            Surface(
+                color = YcRed.copy(alpha = 0.88f),
+                shape = RoundedCornerShape(4.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(10.dp)
+            ) {
+                Text(
+                    "CHARTS · " + error,
+                    color = YcText,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 8.sp,
+                    maxLines = 2,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                )
+            }
+        }
     }
 }
 
