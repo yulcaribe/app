@@ -33,6 +33,7 @@ data class BriefingPayload(
     val estimatedEetMinutes: Int, val route: List<GeoPoint>, val stations: List<BriefStation>,
     val hazards: List<BriefHazard>, val source: String
 )
+data class WafsStatus(val source: String, val products: List<String>, val forecastHours: String)
 
 object YulCaribeApi {
     private const val BASE = "https://yulcaribe.com/main/api"
@@ -296,6 +297,22 @@ object YulCaribeApi {
             stations = stations,
             hazards = hazards,
             source = json.optString("source", "NOAA/NWS Aviation Weather Center")
+        )
+    }
+
+    suspend fun wafsStatus(fl: Int = 360): WafsStatus = withContext(Dispatchers.IO) {
+        val json = JSONObject(getText(BASE + "/wafs.php?action=status&fl=" + fl))
+        val arr = json.optJSONArray("products") ?: JSONArray()
+        val products = buildList {
+            for (i in 0 until arr.length()) {
+                val row = arr.optJSONObject(i) ?: continue
+                add(row.optString("label", row.optString("id")))
+            }
+        }
+        WafsStatus(
+            source = json.optString("source", "AWC WAFS"),
+            products = products,
+            forecastHours = json.optString("forecastHours", "6..36 every 3 hours")
         )
     }
 
