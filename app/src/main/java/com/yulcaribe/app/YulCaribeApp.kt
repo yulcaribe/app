@@ -1720,6 +1720,42 @@ private fun MapChip(label: String, active: Boolean) {
     }
 }
 
+private fun routeGeoJson(points: List<RoutePoint>): String {
+    if (points.size < 2) return emptyGeoJson()
+    val coordinates = org.json.JSONArray()
+    points.forEach { p ->
+        coordinates.put(org.json.JSONArray().put(p.lon).put(p.lat))
+    }
+    val geometry = org.json.JSONObject()
+        .put("type", "LineString")
+        .put("coordinates", coordinates)
+    val feature = org.json.JSONObject()
+        .put("type", "Feature")
+        .put("geometry", geometry)
+        .put("properties", org.json.JSONObject().put("layer", "route"))
+    return org.json.JSONObject()
+        .put("type", "FeatureCollection")
+        .put("features", org.json.JSONArray().put(feature))
+        .toString()
+}
+
+private fun routeViewport(points: List<RoutePoint>): Viewport {
+    if (points.isEmpty()) return airportViewport(ltfmFallback, 7)
+    val minLat = points.minOf { it.lat }
+    val maxLat = points.maxOf { it.lat }
+    val minLon = points.minOf { it.lon }
+    val maxLon = points.maxOf { it.lon }
+    val latPad = max(0.35, (maxLat - minLat) * 0.12)
+    val lonPad = max(0.45, (maxLon - minLon) * 0.12)
+    return Viewport(
+        west = (minLon - lonPad).coerceAtLeast(-180.0),
+        south = (minLat - latPad).coerceAtLeast(-85.0),
+        east = (maxLon + lonPad).coerceAtMost(180.0),
+        north = (maxLat + latPad).coerceAtMost(85.0),
+        zoom = 5
+    )
+}
+
 private fun airportViewport(airport: Airport, zoom: Int): Viewport =
     Viewport(
         west = airport.lon - 1.35,
