@@ -103,7 +103,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             YulCaribeTheme {
-                YulCaribeApp()
+                LiveYulCaribeApp()
             }
         }
     }
