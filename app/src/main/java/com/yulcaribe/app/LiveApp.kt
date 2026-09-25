@@ -116,6 +116,7 @@ private data class LiveLayers(
     val star: Boolean = false,
     val airspace: Boolean = true,
     val notam: Boolean = false,
+    val wafs: Boolean = false,
     val adsb: Boolean = false
 ) {
     fun serverLayers(): Set<String> = buildSet {
@@ -1092,6 +1093,7 @@ private fun LiveNavMapScreen() {
     var center by remember { mutableStateOf(ltfmFallback) }
     var nav by remember { mutableStateOf<NavViewport?>(null) }
     var aircraft by remember { mutableStateOf<List<AircraftPoint>>(emptyList()) }
+    var wafsStatus by remember { mutableStateOf<WafsStatus?>(null) }
     var layers by remember { mutableStateOf(LiveLayers()) }
     var showLayers by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
@@ -1113,12 +1115,16 @@ private fun LiveNavMapScreen() {
                 val adsbTask = async {
                     if (layers.adsb) YulCaribeApi.flights(center.lat, center.lon, 100) else emptyList()
                 }
-                mapTask.await() to adsbTask.await()
+                val wafsTask = async {
+                    if (layers.wafs) YulCaribeApi.wafsStatus(360) else null
+                }
+                Triple(mapTask.await(), adsbTask.await(), wafsTask.await())
             }
         }
         result.onSuccess {
             nav = it.first
             aircraft = it.second
+            wafsStatus = it.third
         }.onFailure { error = it.message ?: "NavMap request failed." }
         loading = false
     }
@@ -1178,7 +1184,28 @@ private fun LiveNavMapScreen() {
         ) {
             LiveMapChip("CHARTS", true)
             LiveMapChip("NOTAM " + (nav?.counts?.get("notam") ?: 0), layers.notam)
+            LiveMapChip(if (layers.wafs && wafsStatus != null) "WAFS LIVE" else "WAFS", layers.wafs)
             LiveMapChip("ADS-B " + aircraft.size, layers.adsb)
+        }
+
+        if (layers.wafs && wafsStatus != null) {
+            Surface(
+                color = LiveSurface.copy(alpha = 0.92f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, LiveCyan.copy(alpha = 0.35f)),
+                shape = RoundedCornerShape(5.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 14.dp, vertical = 54.dp)
+            ) {
+                Text(
+                    "WAFS API · " + wafsStatus!!.products.joinToString(" · "),
+                    color = LiveCyanSoft,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 8.sp,
+                    maxLines = 2,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                )
+            }
         }
 
         if (loading) {
@@ -1217,6 +1244,7 @@ private fun LiveNavMapScreen() {
                 LiveLayerToggle("STAR", layers.star) { layers = layers.copy(star = it) }
                 LiveLayerToggle("Airspace", layers.airspace) { layers = layers.copy(airspace = it) }
                 LiveLayerToggle("NOTAM geometry", layers.notam) { layers = layers.copy(notam = it) }
+                LiveLayerToggle("WAFS forecast", layers.wafs) { layers = layers.copy(wafs = it) }
                 LiveLayerToggle("ADS-B traffic", layers.adsb) { layers = layers.copy(adsb = it) }
 
                 Spacer(Modifier.height(28.dp))
