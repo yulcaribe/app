@@ -339,8 +339,7 @@ private fun HomeScreen(prefs: AppPreferences) {
                     wafsFrame = null,
                     modifier = Modifier
                         .fillMaxSize()
-                        .blur(4.dp)
-                        .alpha(0.72f)
+                        .alpha(0.52f)
                 )
 
                 Box(
