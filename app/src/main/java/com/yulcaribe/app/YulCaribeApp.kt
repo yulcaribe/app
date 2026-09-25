@@ -1032,6 +1032,11 @@ private fun BriefingTable(
     }
 }
 
+private enum class MapPanel {
+    Charts,
+    Wafs
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun NavMapScreen() {
@@ -1039,14 +1044,25 @@ private fun NavMapScreen() {
     var centerAirport by remember { mutableStateOf(ltfmFallback) }
     var viewport by remember { mutableStateOf(airportViewport(ltfmFallback, 7)) }
     var layers by remember { mutableStateOf(MapLayers()) }
-    var showLayers by remember { mutableStateOf(false) }
+    var panel by remember { mutableStateOf<MapPanel?>(null) }
+
     var chartGeo by remember { mutableStateOf(emptyGeoJson()) }
     var notamGeo by remember { mutableStateOf(emptyGeoJson()) }
     var flightsGeo by remember { mutableStateOf(emptyGeoJson()) }
     var wafsFrame by remember { mutableStateOf<WafsFrame?>(null) }
-    var loading by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
+
+    var chartsError by remember { mutableStateOf<String?>(null) }
+    var notamError by remember { mutableStateOf<String?>(null) }
+    var wafsError by remember { mutableStateOf<String?>(null) }
+    var adsbError by remember { mutableStateOf<String?>(null) }
+
+    var chartsLoading by remember { mutableStateOf(false) }
+    var notamLoading by remember { mutableStateOf(false) }
+    var wafsLoading by remember { mutableStateOf(false) }
+    var adsbLoading by remember { mutableStateOf(false) }
+
     var refreshToken by remember { mutableIntStateOf(0) }
+    var loadGeneration by remember { mutableIntStateOf(0) }
     var timeOffsetHours by remember { mutableFloatStateOf(0f) }
     var wafsProduct by remember { mutableStateOf("edr") }
     var wafsFl by remember { mutableIntStateOf(340) }
@@ -1060,55 +1076,108 @@ private fun NavMapScreen() {
     }
 
     LaunchedEffect(viewport, layers, refreshToken, timeOffsetHours, wafsProduct, wafsFl) {
-        loading = true
-        error = null
+        val generation = ++loadGeneration
         val validTime = Instant.now().plus(timeOffsetHours.toLong(), ChronoUnit.HOURS)
-        val result = runCatching {
-            coroutineScope {
-                val chartTask = async {
-                    YcApi.chartViewport(viewport, layers.chartSet())
+
+        chartsLoading = layers.charts && layers.chartSet().isNotEmpty()
+        notamLoading = layers.notam && viewport.zoom >= 5
+        wafsLoading = layers.wafs
+        adsbLoading = layers.adsb
+
+        coroutineScope {
+            val chartTask = async {
+                if (layers.charts && layers.chartSet().isNotEmpty()) {
+                    runCatching { YcApi.chartViewport(viewport, layers.chartSet()) }
+                } else {
+                    Result.success(emptyGeoJson())
                 }
-                val notamTask = async {
-                    if (layers.notam && viewport.zoom >= 5) {
-                        YcApi.notamViewport(viewport, validTime)
-                    } else {
-                        emptyGeoJson()
-                    }
+            }
+
+            val notamTask = async {
+                if (layers.notam && viewport.zoom >= 5) {
+                    runCatching { YcApi.notamViewport(viewport, validTime) }
+                } else {
+                    Result.success(emptyGeoJson())
                 }
-                val flightTask = async {
-                    if (layers.adsb) {
+            }
+
+            val adsbTask = async {
+                if (layers.adsb) {
+                    runCatching {
                         val lat = (viewport.north + viewport.south) / 2.0
                         val lon = midpointLongitude(viewport.west, viewport.east)
                         YcApi.flightsGeoJson(
                             YcApi.flights(lat, lon, viewportRadiusNm(viewport))
                         )
-                    } else {
-                        emptyGeoJson()
                     }
+                } else {
+                    Result.success(emptyGeoJson())
                 }
-                val wafsTask = async {
-                    if (layers.wafs) {
-                        YcApi.wafsFrame(wafsProduct, wafsFl, validTime)
-                    } else null
-                }
-                listOf(
-                    chartTask.await(),
-                    notamTask.await(),
-                    flightTask.await()
-                ) to wafsTask.await()
             }
-        }
 
-        result.onSuccess { payload ->
-            chartGeo = payload.first[0]
-            notamGeo = payload.first[1]
-            flightsGeo = payload.first[2]
-            wafsFrame = payload.second
-            apiOk = true
-        }.onFailure {
-            error = it.message ?: "NavMap API request failed."
+            val wafsTask = async {
+                if (layers.wafs) {
+                    runCatching { YcApi.wafsFrame(wafsProduct, wafsFl, validTime) }
+                } else {
+                    Result.success<WafsFrame?>(null)
+                }
+            }
+
+            val chartResult = chartTask.await()
+            val notamResult = notamTask.await()
+            val adsbResult = adsbTask.await()
+            val wafsResult = wafsTask.await()
+
+            if (generation != loadGeneration) return@coroutineScope
+
+            chartResult.fold(
+                onSuccess = {
+                    chartGeo = it
+                    chartsError = null
+                    apiOk = true
+                },
+                onFailure = {
+                    chartsError = it.message ?: "CHARTS request failed."
+                }
+            )
+            chartsLoading = false
+
+            notamResult.fold(
+                onSuccess = {
+                    notamGeo = it
+                    notamError = null
+                    if (layers.notam) apiOk = true
+                },
+                onFailure = {
+                    notamError = it.message ?: "NOTAM request failed."
+                }
+            )
+            notamLoading = false
+
+            adsbResult.fold(
+                onSuccess = {
+                    flightsGeo = it
+                    adsbError = null
+                    if (layers.adsb) apiOk = true
+                },
+                onFailure = {
+                    adsbError = it.message ?: "ADS-B request failed."
+                }
+            )
+            adsbLoading = false
+
+            wafsResult.fold(
+                onSuccess = {
+                    wafsFrame = it
+                    wafsError = null
+                    if (layers.wafs) apiOk = true
+                },
+                onFailure = {
+                    wafsError = it.message ?: "WAFS request failed."
+                }
+            )
+            wafsLoading = false
         }
-        loading = false
     }
 
     Box(Modifier.fillMaxSize().background(YcVoid)) {
@@ -1138,54 +1207,56 @@ private fun NavMapScreen() {
 
         Row(
             Modifier
+                .align(Alignment.TopStart)
                 .statusBarsPadding()
-                .padding(top = 58.dp, start = 14.dp, end = 14.dp)
-                .fillMaxWidth(),
+                .padding(top = 60.dp, start = 12.dp, end = 12.dp)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Surface(
-                onClick = { showLayers = true },
-                color = YcSurface.copy(alpha = 0.94f),
-                border = androidx.compose.foundation.BorderStroke(1.dp, YcHairline),
-                shape = RoundedCornerShape(7.dp)
-            ) {
-                Row(
-                    Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Outlined.Layers, null, tint = YcCyan, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("LAYERS", color = YcText, fontFamily = FontFamily.Monospace, fontSize = 10.sp)
-                }
-            }
-            Spacer(Modifier.width(8.dp))
+            MapControlChip(
+                label = "CHARTS",
+                active = layers.charts,
+                error = chartsError,
+                loading = chartsLoading,
+                hasOptions = true,
+                onClick = { panel = MapPanel.Charts }
+            )
+            MapControlChip(
+                label = "NOTAM",
+                active = layers.notam,
+                error = notamError,
+                loading = notamLoading,
+                onClick = { layers = layers.copy(notam = !layers.notam) }
+            )
+            MapControlChip(
+                label = "WAFS",
+                active = layers.wafs,
+                error = wafsError,
+                loading = wafsLoading,
+                hasOptions = true,
+                onClick = { panel = MapPanel.Wafs }
+            )
+            MapControlChip(
+                label = "ADS-B",
+                active = layers.adsb,
+                error = adsbError,
+                loading = adsbLoading,
+                onClick = { layers = layers.copy(adsb = !layers.adsb) }
+            )
             Surface(
                 onClick = { refreshToken++ },
-                color = YcSurface.copy(alpha = 0.94f),
+                color = YcSurface.copy(alpha = 0.92f),
                 border = androidx.compose.foundation.BorderStroke(1.dp, YcHairline),
-                shape = RoundedCornerShape(7.dp)
+                shape = RoundedCornerShape(5.dp)
             ) {
                 Icon(
                     Icons.Outlined.Refresh,
-                    null,
+                    contentDescription = "Refresh",
                     tint = YcCyan,
                     modifier = Modifier.padding(10.dp).size(18.dp)
                 )
             }
-        }
-
-        Row(
-            Modifier
-                .align(Alignment.TopStart)
-                .statusBarsPadding()
-                .padding(top = 108.dp, start = 14.dp)
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            MapChip("CHARTS", layers.chartSet().isNotEmpty())
-            MapChip("NOTAM", layers.notam)
-            MapChip("WAFS", layers.wafs)
-            MapChip("ADS-B", layers.adsb)
         }
 
         Column(
@@ -1207,23 +1278,31 @@ private fun NavMapScreen() {
                     fontSize = 10.sp
                 )
                 Spacer(Modifier.weight(1f))
-                if (loading) {
-                    Text("LOADING", color = YcMuted, fontFamily = FontFamily.Monospace, fontSize = 9.sp)
-                }
+                Text(
+                    "UTC TIMELINE",
+                    color = YcMuted,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 9.sp
+                )
             }
+
             Slider(
                 value = timeOffsetHours,
                 onValueChange = { timeOffsetHours = it },
                 valueRange = -24f..24f,
                 steps = 47
             )
-            if (error != null) ErrorBox(error!!)
+
+            LayerErrorLine("CHARTS", chartsError)
+            if (layers.notam) LayerErrorLine("NOTAM", notamError)
+            if (layers.wafs) LayerErrorLine("WAFS", wafsError)
+            if (layers.adsb) LayerErrorLine("ADS-B", adsbError)
         }
     }
 
-    if (showLayers) {
+    if (panel == MapPanel.Charts) {
         ModalBottomSheet(
-            onDismissRequest = { showLayers = false },
+            onDismissRequest = { panel = null },
             containerColor = YcSurface,
             contentColor = YcText
         ) {
@@ -1231,15 +1310,18 @@ private fun NavMapScreen() {
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp)
             ) {
                 item {
-                    Text("MAP LAYERS", style = MaterialTheme.typography.headlineMedium)
+                    Text("CHARTS", style = MaterialTheme.typography.headlineMedium)
                     Text(
-                        "One native MapLibre map using the current API v1 endpoints.",
+                        "Master switch plus individual aeronautical chart layers.",
                         color = YcMuted,
                         fontSize = 11.sp
                     )
-                    Spacer(Modifier.height(18.dp))
+                    Spacer(Modifier.height(16.dp))
 
-                    Kicker("CHARTS")
+                    LayerToggle("Charts", layers.charts) {
+                        layers = layers.copy(charts = it)
+                    }
+                    HorizontalDivider(color = YcHairline)
                     LayerToggle("Airports", layers.airports) { layers = layers.copy(airports = it) }
                     LayerToggle("Navaids", layers.navaids) { layers = layers.copy(navaids = it) }
                     LayerToggle("Waypoints", layers.waypoints) { layers = layers.copy(waypoints = it) }
@@ -1248,76 +1330,181 @@ private fun NavMapScreen() {
                     LayerToggle("STAR", layers.star) { layers = layers.copy(star = it) }
                     LayerToggle("Airspace", layers.airspace) { layers = layers.copy(airspace = it) }
 
-                    Spacer(Modifier.height(14.dp))
-                    Kicker("OPERATIONAL")
-                    LayerToggle("NOTAM", layers.notam) { layers = layers.copy(notam = it) }
-                    LayerToggle("WAFS", layers.wafs) { layers = layers.copy(wafs = it) }
-                    LayerToggle("ADS-B traffic", layers.adsb) { layers = layers.copy(adsb = it) }
-
-                    if (layers.wafs) {
-                        Spacer(Modifier.height(14.dp))
-                        Kicker("WAFS")
-                        Row(
-                            Modifier
-                                .horizontalScroll(rememberScrollState())
-                                .padding(bottom = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            listOf(
-                                "edr" to "EDR",
-                                "icing" to "ICING",
-                                "cbextent" to "CB EXTENT",
-                                "cbtop" to "CB TOPS",
-                                "wind" to "WIND"
-                            ).forEach { option ->
-                                Surface(
-                                    onClick = {
-                                        wafsProduct = option.first
-                                        wafsFl = nearestSupportedWafsLevel(option.first, wafsFl)
-                                    },
-                                    color = if (wafsProduct == option.first) {
-                                        YcCyan.copy(alpha = 0.14f)
-                                    } else {
-                                        YcSurfaceHigh
-                                    },
-                                    border = androidx.compose.foundation.BorderStroke(
-                                        1.dp,
-                                        if (wafsProduct == option.first) YcCyan else YcHairline
-                                    ),
-                                    shape = RoundedCornerShape(4.dp)
-                                ) {
-                                    Text(
-                                        option.second,
-                                        color = if (wafsProduct == option.first) YcCyanSoft else YcMuted,
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 9.sp,
-                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp)
-                                    )
-                                }
-                            }
-                        }
-                        if (wafsProduct != "cbextent" && wafsProduct != "cbtop") {
-                            Text(
-                                "FL" + wafsFl,
-                                color = YcText,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 11.sp
-                            )
-                            Slider(
-                                value = wafsFl.toFloat(),
-                                onValueChange = {
-                                    wafsFl = nearestSupportedWafsLevel(wafsProduct, it.toInt())
-                                },
-                                valueRange = 60f..450f
-                            )
-                        }
+                    if (chartsError != null) {
+                        Spacer(Modifier.height(12.dp))
+                        ErrorBox("CHARTS · " + chartsError!!)
                     }
-
-                    Spacer(Modifier.height(30.dp))
+                    Spacer(Modifier.height(28.dp))
                 }
             }
         }
     }
+
+    if (panel == MapPanel.Wafs) {
+        ModalBottomSheet(
+            onDismissRequest = { panel = null },
+            containerColor = YcSurface,
+            contentColor = YcText
+        ) {
+            LazyColumn(
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp)
+            ) {
+                item {
+                    Text("WAFS", style = MaterialTheme.typography.headlineMedium)
+                    Text(
+                        "Public WAFS raster layer and product controls.",
+                        color = YcMuted,
+                        fontSize = 11.sp
+                    )
+                    Spacer(Modifier.height(16.dp))
+
+                    LayerToggle("WAFS", layers.wafs) {
+                        layers = layers.copy(wafs = it)
+                    }
+
+                    Spacer(Modifier.height(14.dp))
+                    Kicker("PRODUCT")
+                    Row(
+                        Modifier
+                            .horizontalScroll(rememberScrollState())
+                            .padding(bottom = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(
+                            "edr" to "EDR",
+                            "icing" to "ICING",
+                            "cbextent" to "CB EXTENT",
+                            "cbtop" to "CB TOPS",
+                            "wind" to "WIND"
+                        ).forEach { option ->
+                            OptionChip(
+                                label = option.second,
+                                selected = wafsProduct == option.first,
+                                onClick = {
+                                    wafsProduct = option.first
+                                    wafsFl = nearestSupportedWafsLevel(option.first, wafsFl)
+                                }
+                            )
+                        }
+                    }
+
+                    if (wafsProduct != "cbextent" && wafsProduct != "cbtop") {
+                        Spacer(Modifier.height(8.dp))
+                        Kicker("FLIGHT LEVEL")
+                        Text(
+                            "FL" + wafsFl,
+                            color = YcText,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp
+                        )
+                        Slider(
+                            value = wafsFl.toFloat(),
+                            onValueChange = {
+                                wafsFl = nearestSupportedWafsLevel(wafsProduct, it.toInt())
+                            },
+                            valueRange = 60f..450f
+                        )
+                    }
+
+                    if (wafsError != null) {
+                        Spacer(Modifier.height(12.dp))
+                        ErrorBox("WAFS · " + wafsError!!)
+                    }
+                    Spacer(Modifier.height(28.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MapControlChip(
+    label: String,
+    active: Boolean,
+    error: String?,
+    loading: Boolean,
+    hasOptions: Boolean = false,
+    onClick: () -> Unit
+) {
+    val borderColor = when {
+        error != null -> YcRed
+        active -> YcCyan.copy(alpha = 0.70f)
+        else -> YcHairline
+    }
+    val textColor = when {
+        error != null -> YcRed
+        active -> YcCyanSoft
+        else -> YcMuted
+    }
+
+    Surface(
+        onClick = onClick,
+        color = if (active) YcCyan.copy(alpha = 0.12f) else YcSurface.copy(alpha = 0.92f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, borderColor),
+        shape = RoundedCornerShape(5.dp)
+    ) {
+        Row(
+            Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                label + if (hasOptions) " ▾" else "",
+                color = textColor,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                fontSize = 9.sp
+            )
+            if (loading) {
+                Spacer(Modifier.width(5.dp))
+                Text("…", color = YcCyan, fontSize = 10.sp)
+            } else if (error != null) {
+                Spacer(Modifier.width(5.dp))
+                Text("!", color = YcRed, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun OptionChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        color = if (selected) YcCyan.copy(alpha = 0.14f) else YcSurfaceHigh,
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (selected) YcCyan else YcHairline
+        ),
+        shape = RoundedCornerShape(4.dp)
+    ) {
+        Text(
+            label,
+            color = if (selected) YcCyanSoft else YcMuted,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 9.sp,
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp)
+        )
+    }
+}
+
+@Composable
+private fun LayerErrorLine(
+    label: String,
+    error: String?
+) {
+    if (error == null) return
+    Text(
+        label + " · " + error,
+        color = YcRed,
+        fontFamily = FontFamily.Monospace,
+        fontSize = 8.sp,
+        lineHeight = 12.sp,
+        maxLines = 2,
+        modifier = Modifier.padding(top = 4.dp)
+    )
 }
 
 @Composable
