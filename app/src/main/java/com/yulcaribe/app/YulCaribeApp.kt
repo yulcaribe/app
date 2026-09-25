@@ -103,6 +103,7 @@ data class AppPreferences(
 )
 
 private data class MapLayers(
+    val charts: Boolean = true,
     val airports: Boolean = true,
     val navaids: Boolean = true,
     val waypoints: Boolean = false,
@@ -115,6 +116,7 @@ private data class MapLayers(
     val adsb: Boolean = false
 ) {
     fun chartSet(): Set<String> = buildSet {
+        if (!charts) return@buildSet
         if (airports) add("airport")
         if (navaids) add("navaid")
         if (waypoints) add("waypoint")
@@ -234,6 +236,7 @@ private fun HomeScreen(prefs: AppPreferences) {
     var query by rememberSaveable { mutableStateOf("") }
     var matches by remember { mutableStateOf<List<Airport>>(emptyList()) }
     var searchBusy by remember { mutableStateOf(false) }
+    var searchGeneration by remember { mutableIntStateOf(0) }
     var showResults by rememberSaveable { mutableStateOf(false) }
     var weather by remember { mutableStateOf<WeatherBundle?>(null) }
     var notams by remember { mutableStateOf<NotamPage?>(null) }
@@ -250,16 +253,25 @@ private fun HomeScreen(prefs: AppPreferences) {
     }
 
     LaunchedEffect(query) {
-        val q = query.trim()
-        if (q.length < 2 || q.equals(activeAirport.icao, true)) {
+        val typed = query.trim()
+        val normalized = YcApi.normalizeAirportQuery(typed)
+        if (normalized.length < 2 || normalized.equals(activeAirport.icao, true)) {
             matches = emptyList()
             searchBusy = false
             return@LaunchedEffect
         }
+
+        val generation = ++searchGeneration
         searchBusy = true
-        delay(260)
-        matches = runCatching { YcApi.airportSearch(q, 8) }.getOrDefault(emptyList())
-        searchBusy = false
+        delay(220)
+
+        val result = runCatching { YcApi.airportSearch(normalized, 8) }
+            .getOrDefault(emptyList())
+
+        if (generation == searchGeneration && query.trim() == typed) {
+            matches = result
+            searchBusy = false
+        }
     }
 
     LaunchedEffect(activeAirport.icao, showResults, refreshToken) {
