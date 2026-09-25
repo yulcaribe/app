@@ -18,6 +18,25 @@ import kotlin.math.sinh
 object YcApi {
     const val BASE = "https://yulcaribe.com/main/api/v1"
 
+    private val localAirportFallbacks = listOf(
+        Airport(0, "LTAI", "AYT", "Antalya Airport", "Antalya", 36.8987, 30.8005, 177),
+        Airport(0, "LTFM", "IST", "Istanbul Airport", "Istanbul", 41.2753, 28.7519, 325),
+        Airport(0, "LTFJ", "SAW", "Istanbul Sabiha Gokcen Airport", "Istanbul", 40.8986, 29.3092, 312),
+        Airport(0, "LTAC", "ESB", "Ankara Esenboga Airport", "Ankara", 40.1281, 32.9951, 3125),
+        Airport(0, "LTBJ", "ADB", "Izmir Adnan Menderes Airport", "Izmir", 38.2924, 27.1569, 412)
+    )
+
+    private val phonetic = mapOf(
+        "ALFA" to "A", "ALPHA" to "A", "BRAVO" to "B", "CHARLIE" to "C",
+        "DELTA" to "D", "ECHO" to "E", "FOXTROT" to "F", "GOLF" to "G",
+        "HOTEL" to "H", "INDIA" to "I", "JULIETT" to "J", "JULIET" to "J",
+        "KILO" to "K", "LIMA" to "L", "MIKE" to "M", "NOVEMBER" to "N",
+        "OSCAR" to "O", "PAPA" to "P", "QUEBEC" to "Q", "ROMEO" to "R",
+        "SIERRA" to "S", "TANGO" to "T", "UNIFORM" to "U", "VICTOR" to "V",
+        "WHISKEY" to "W", "XRAY" to "X", "X-RAY" to "X", "YANKEE" to "Y",
+        "ZULU" to "Z"
+    )
+
     private fun enc(value: String): String =
         URLEncoder.encode(value, StandardCharsets.UTF_8.toString())
 
@@ -59,7 +78,9 @@ object YcApi {
         val text = response.body.toString(Charsets.UTF_8)
         val json = if (text.isBlank()) JSONObject() else JSONObject(text)
         if (response.code !in 200..299 || !json.optBoolean("ok", response.code in 200..299)) {
-            error(json.optString("error").ifBlank { "HTTP " + response.code })
+            val endpoint = runCatching { URL(url).path.substringAfterLast("/") }.getOrDefault("api")
+            val detail = json.optString("error").ifBlank { "Request failed" }
+            error(endpoint + " · HTTP " + response.code + " · " + detail)
         }
         return json
     }
@@ -71,18 +92,56 @@ object YcApi {
         }.getOrDefault(false)
     }
 
+    fun normalizeAirportQuery(input: String): String {
+        val raw = input.trim()
+        if (raw.isBlank()) return ""
+        val words = raw.uppercase().split(Regex("[\\s-]+")).filter { it.isNotBlank() }
+        if (words.size in 3..8 && words.all { phonetic.containsKey(it) }) {
+            return words.joinToString("") { phonetic[it].orEmpty() }
+        }
+        return raw
+    }
+
     suspend fun airportSearch(query: String, limit: Int = 12): List<Airport> =
         withContext(Dispatchers.IO) {
-            val json = httpJson(
-                BASE + "/navdata.php?action=airport-search&q=" + enc(query.trim()) +
-                    "&limit=" + limit.coerceIn(1, 50)
-            )
-            parseAirports(json.optJSONArray("items"))
+            val normalized = normalizeAirportQuery(query).trim()
+            if (normalized.length < 2) return@withContext emptyList()
+
+            val needle = normalized.uppercase()
+            val localMatches = localAirportFallbacks.filter { airport ->
+                airport.icao == needle ||
+                    airport.iata?.uppercase() == needle ||
+                    airport.name.uppercase().contains(needle) ||
+                    airport.city?.uppercase()?.contains(needle) == true
+            }
+
+            val remoteMatches = runCatching {
+                val json = httpJson(
+                    BASE + "/navdata.php?action=airport-search&q=" + enc(normalized) +
+                        "&limit=" + limit.coerceIn(1, 50)
+                )
+                parseAirports(json.optJSONArray("items"))
+            }.getOrDefault(emptyList())
+
+            (localMatches + remoteMatches)
+                .distinctBy { it.icao.uppercase() }
+                .sortedWith(
+                    compareByDescending<Airport> { it.icao.equals(needle, true) }
+                        .thenByDescending { it.iata?.equals(needle, true) == true }
+                        .thenByDescending { it.city?.equals(normalized, true) == true }
+                        .thenBy { it.icao }
+                )
+                .take(limit.coerceIn(1, 50))
         }
 
     suspend fun airportDetail(ident: String): Airport = withContext(Dispatchers.IO) {
+        val normalized = normalizeAirportQuery(ident).trim().uppercase()
+        localAirportFallbacks.firstOrNull {
+            it.icao == normalized || it.iata?.uppercase() == normalized
+        }?.let { return@withContext it }
+
         val json = httpJson(
-            BASE + "/navdata.php?action=airport-detail&ident=" + enc(ident.trim().uppercase())
+            BASE + "/navdata.php?action=airport-detail&ident=" + enc(normalized)
         )
         parseAirport(json.getJSONObject("airport"))
     }
@@ -369,7 +428,7 @@ object YcApi {
             val message = runCatching {
                 JSONObject(response.body.toString(Charsets.UTF_8)).optString("error")
             }.getOrDefault("")
-            error(message.ifBlank { "WAFS HTTP " + response.code })
+            error("wafs.php · HTTP " + response.code + " · " + message.ifBlank { "WAFS image request failed" })
         }
         val bitmap = BitmapFactory.decodeByteArray(response.body, 0, response.body.size)
             ?: error("WAFS PNG çözülemedi.")
