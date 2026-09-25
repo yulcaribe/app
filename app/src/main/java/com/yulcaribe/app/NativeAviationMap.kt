@@ -15,6 +15,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.geometry.LatLngQuad
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
@@ -46,6 +47,7 @@ import org.maplibre.android.style.sources.ImageSource
 private const val SOURCE_CHARTS = "yc-charts"
 private const val SOURCE_NOTAMS = "yc-notams"
 private const val SOURCE_FLIGHTS = "yc-flights"
+private const val SOURCE_ROUTE = "yc-route"
 private const val SOURCE_WAFS = "yc-wafs"
 
 private const val LAYER_WAFS = "yc-wafs-raster"
@@ -87,6 +89,8 @@ fun NativeAviationMap(
     chartsGeoJson: String,
     notamGeoJson: String,
     flightsGeoJson: String,
+    routeGeoJson: String = """{"type":"FeatureCollection","features":[]}""",
+    routePoints: List<RoutePoint> = emptyList(),
     wafsFrame: WafsFrame?,
     onViewportChanged: (Viewport) -> Unit = {}
 ) {
@@ -185,6 +189,26 @@ fun NativeAviationMap(
         }
     }
 
+    LaunchedEffect(routeGeoJson, styleReady) {
+        if (!styleReady) return@LaunchedEffect
+        mapRef?.getStyle { style ->
+            (style.getSource(SOURCE_ROUTE) as? GeoJsonSource)?.setGeoJson(routeGeoJson)
+        }
+    }
+
+    LaunchedEffect(routePoints, styleReady, mapRef) {
+        if (!styleReady || routePoints.size < 2) return@LaunchedEffect
+        val map = mapRef ?: return@LaunchedEffect
+        val builder = LatLngBounds.Builder()
+        routePoints.forEach { builder.include(LatLng(it.lat, it.lon)) }
+        runCatching {
+            map.animateCamera(
+                CameraUpdateFactory.newLatLngBounds(builder.build(), 72),
+                700
+            )
+        }
+    }
+
     LaunchedEffect(wafsFrame, styleReady) {
         if (!styleReady) return@LaunchedEffect
         mapRef?.getStyle { style ->
@@ -229,6 +253,7 @@ private fun setupSourcesAndLayers(style: Style) {
     style.addSource(GeoJsonSource(SOURCE_CHARTS, emptyGeoJson()))
     style.addSource(GeoJsonSource(SOURCE_NOTAMS, emptyGeoJson()))
     style.addSource(GeoJsonSource(SOURCE_FLIGHTS, emptyGeoJson()))
+    style.addSource(GeoJsonSource(SOURCE_ROUTE, emptyGeoJson()))
 
     style.addLayer(
         FillLayer("yc-airspace-fill", SOURCE_CHARTS)
@@ -280,6 +305,15 @@ private fun setupSourcesAndLayers(style: Style) {
                 circleRadius(5.0f),
                 circleStrokeColor("#081116"),
                 circleStrokeWidth(1.2f)
+            )
+    )
+
+    style.addLayer(
+        LineLayer("yc-route-line", SOURCE_ROUTE)
+            .withProperties(
+                lineColor("#00d9ff"),
+                lineWidth(3.2f),
+                lineOpacity(0.95f)
             )
     )
 
