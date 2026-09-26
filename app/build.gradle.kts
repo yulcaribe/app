@@ -11,8 +11,9 @@ android {
         applicationId = "com.yulcaribe.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0"
+        val ciRun = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
+        versionCode = ciRun ?: 3
+        versionName = if (ciRun != null) "0.3." + ciRun else "0.3.0"
     }
 
     compileOptions {
