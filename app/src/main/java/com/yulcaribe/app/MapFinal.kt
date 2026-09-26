@@ -58,6 +58,26 @@ import java.time.temporal.ChronoUnit
 
 private enum class FinalMapPanel { Charts, Wafs }
 
+private data class FinalWafsProduct(
+    val id: String,
+    val label: String,
+    val levels: List<Int>?
+)
+
+private val FINAL_WAFS_PRODUCTS = listOf(
+    FinalWafsProduct("edr", "EDR", listOf(140, 180, 240, 270, 300, 340, 390, 450)),
+    FinalWafsProduct("icing", "ICING", listOf(60, 100, 140, 180, 240, 300)),
+    FinalWafsProduct("cbextent", "CB EXTENT", null),
+    FinalWafsProduct("cbtop", "CB TOPS", null),
+    FinalWafsProduct("wind", "WIND", listOf(100, 140, 180, 240, 270, 300, 340, 390, 450))
+)
+
+private fun finalWafsConfig(id: String): FinalWafsProduct =
+    FINAL_WAFS_PRODUCTS.firstOrNull { it.id == id } ?: FINAL_WAFS_PRODUCTS.first()
+
+private fun finalNearestWafsLevel(product: FinalWafsProduct, requested: Int): Int =
+    product.levels?.minByOrNull { kotlin.math.abs(it - requested) } ?: requested
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun MapScreenFinalV(
@@ -81,11 +101,11 @@ internal fun MapScreenFinalV(
     var chartGeo by remember { mutableStateOf(emptyGeoJsonV()) }
     var notamGeo by remember { mutableStateOf(emptyGeoJsonV()) }
     var flightsGeo by remember { mutableStateOf(emptyGeoJsonV()) }
-    var wafsFrame by remember { mutableStateOf<WafsFrame?>(null) }
+    var wafsFrames by remember { mutableStateOf<Map<String, WafsFrame>>(emptyMap()) }
 
     var chartsError by remember { mutableStateOf<String?>(null) }
     var notamError by remember { mutableStateOf<String?>(null) }
-    var wafsError by remember { mutableStateOf<String?>(null) }
+    var wafsErrors by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var adsbError by remember { mutableStateOf<String?>(null) }
 
     var chartsLoading by remember { mutableStateOf(false) }
@@ -95,11 +115,32 @@ internal fun MapScreenFinalV(
 
     var refreshToken by remember { mutableIntStateOf(0) }
     var loadGeneration by remember { mutableIntStateOf(0) }
+    var wafsGeneration by remember { mutableIntStateOf(0) }
     var timeOffsetHours by remember { mutableFloatStateOf(0f) }
     var timelineExpanded by rememberSaveable { mutableStateOf(false) }
-    var wafsProduct by remember { mutableStateOf("edr") }
-    var wafsFl by remember { mutableIntStateOf(340) }
-    var wafsOpacity by remember { mutableFloatStateOf(0.48f) }
+
+    val allWafsIds = remember { FINAL_WAFS_PRODUCTS.map { it.id }.toSet() }
+    var wafsSelectedProduct by remember { mutableStateOf("edr") }
+    var wafsActiveProducts by remember {
+        mutableStateOf(if (prefs.mapWafs) allWafsIds else emptySet())
+    }
+    var wafsLevels by remember {
+        mutableStateOf(
+            mapOf(
+                "edr" to 340,
+                "icing" to 240,
+                "wind" to 340
+            )
+        )
+    }
+    var wafsOpacities by remember {
+        mutableStateOf(FINAL_WAFS_PRODUCTS.associate { it.id to 0.48f })
+    }
+
+    val wafsTopError = wafsErrors.entries.firstOrNull()?.let { (id, message) ->
+        finalWafsConfig(id).label + " · " + message
+    }
+
     val adsbBuffer = remember { AdsbTrackBuffer() }
 
     fun persistTopLevel(next: VMapLayers) {
@@ -114,6 +155,23 @@ internal fun MapScreenFinalV(
         )
     }
 
+    fun setWafsProductEnabled(product: String, enabled: Boolean) {
+        val next = if (enabled) wafsActiveProducts + product else wafsActiveProducts - product
+        wafsActiveProducts = next
+        if (next.isEmpty()) {
+            persistTopLevel(layers.copy(wafs = false))
+            wafsFrames = emptyMap()
+        } else if (!layers.wafs) {
+            persistTopLevel(layers.copy(wafs = true))
+        }
+    }
+
+    fun setWafsLevel(product: String, level: Int) {
+        val cfg = finalWafsConfig(product)
+        val normalized = finalNearestWafsLevel(cfg, level)
+        wafsLevels = wafsLevels + (product to normalized)
+    }
+
     LaunchedEffect(prefs.mainAirportIcao) {
         runCatching { YcApi.airportDetail(prefs.mainAirportIcao) }
             .getOrNull()
@@ -123,13 +181,12 @@ internal fun MapScreenFinalV(
             }
     }
 
-    LaunchedEffect(viewport, layers, refreshToken, timeOffsetHours, wafsProduct, wafsFl) {
+    LaunchedEffect(viewport, layers, refreshToken, timeOffsetHours) {
         val generation = ++loadGeneration
         val validTime = Instant.now().plus(timeOffsetHours.toLong(), ChronoUnit.HOURS)
 
         chartsLoading = layers.charts && layers.chartSet().isNotEmpty()
         notamLoading = layers.notam && viewport.zoom >= 5
-        wafsLoading = layers.wafs
 
         coroutineScope {
             val chartTask = async {
@@ -142,15 +199,9 @@ internal fun MapScreenFinalV(
                     runCatching { YcApi.notamViewport(viewport, validTime) }
                 } else Result.success(emptyGeoJsonV())
             }
-            val wafsTask = async {
-                if (layers.wafs) {
-                    runCatching { YcApi.wafsFrame(wafsProduct, wafsFl, validTime) }
-                } else Result.success<WafsFrame?>(null)
-            }
 
             val chartResult = chartTask.await()
             val notamResult = notamTask.await()
-            val wafsResult = wafsTask.await()
             if (generation != loadGeneration) return@coroutineScope
 
             chartResult.fold(
@@ -164,12 +215,48 @@ internal fun MapScreenFinalV(
                 onFailure = { notamError = it.message ?: "NOTAM request failed." }
             )
             notamLoading = false
+        }
+    }
 
-            wafsResult.fold(
-                onSuccess = { wafsFrame = it; wafsError = null },
-                onFailure = { wafsError = it.message ?: "WAFS request failed." }
-            )
+    LaunchedEffect(layers.wafs, wafsActiveProducts, wafsLevels, refreshToken, timeOffsetHours) {
+        val generation = ++wafsGeneration
+        if (!layers.wafs || wafsActiveProducts.isEmpty()) {
+            wafsFrames = emptyMap()
+            wafsErrors = emptyMap()
             wafsLoading = false
+            return@LaunchedEffect
+        }
+
+        val validTime = Instant.now().plus(timeOffsetHours.toLong(), ChronoUnit.HOURS)
+        wafsLoading = true
+        coroutineScope {
+            val tasks = wafsActiveProducts.associateWith { productId ->
+                async {
+                    val cfg = finalWafsConfig(productId)
+                    val requested = wafsLevels[productId] ?: cfg.levels?.firstOrNull() ?: 340
+                    val level = finalNearestWafsLevel(cfg, requested)
+                    runCatching { YcApi.wafsFrame(productId, level, validTime) }
+                }
+            }
+
+            val nextFrames = wafsFrames.filterKeys { it in wafsActiveProducts }.toMutableMap()
+            val nextErrors = mutableMapOf<String, String>()
+
+            tasks.forEach { (productId, task) ->
+                task.await().fold(
+                    onSuccess = { frame -> nextFrames[productId] = frame },
+                    onFailure = { failure ->
+                        nextFrames.remove(productId)
+                        nextErrors[productId] = failure.message ?: "WAFS request failed."
+                    }
+                )
+            }
+
+            if (generation == wafsGeneration) {
+                wafsFrames = nextFrames
+                wafsErrors = nextErrors
+                wafsLoading = false
+            }
         }
     }
 
@@ -216,8 +303,8 @@ internal fun MapScreenFinalV(
             chartsGeoJson = chartGeo,
             notamGeoJson = notamGeo,
             aircraftGeoJson = flightsGeo,
-            wafsFrame = wafsFrame,
-            wafsOpacity = wafsOpacity,
+            wafsFrames = wafsFrames.values.toList(),
+            wafsOpacities = wafsOpacities,
             onViewportChanged = { viewport = it },
             modifier = Modifier.fillMaxSize()
         )
@@ -261,7 +348,7 @@ internal fun MapScreenFinalV(
             FinalMapControlChip(
                 label = "WAFS",
                 active = layers.wafs,
-                error = wafsError,
+                error = wafsTopError,
                 loading = wafsLoading,
                 hasOptions = true,
                 onClick = { panel = FinalMapPanel.Wafs }
@@ -440,6 +527,14 @@ internal fun MapScreenFinalV(
     }
 
     if (panel == FinalMapPanel.Wafs) {
+        val selectedConfig = finalWafsConfig(wafsSelectedProduct)
+        val selectedActive = wafsSelectedProduct in wafsActiveProducts
+        val selectedLevels = selectedConfig.levels
+        val selectedFl = selectedLevels?.let { levels ->
+            finalNearestWafsLevel(selectedConfig, wafsLevels[wafsSelectedProduct] ?: levels.first())
+        }
+        val selectedOpacity = wafsOpacities[wafsSelectedProduct] ?: 0.48f
+
         ModalBottomSheet(
             onDismissRequest = { panel = null },
             containerColor = YcSurface,
@@ -448,43 +543,111 @@ internal fun MapScreenFinalV(
             LazyColumn(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp)) {
                 item {
                     Text("WAFS", color = YcText, fontWeight = FontWeight.Bold, fontSize = 21.sp)
-                    LayerToggleV("WAFS", layers.wafs) {
-                        persistTopLevel(layers.copy(wafs = it))
+                    LayerToggleV("WAFS", layers.wafs) { enabled ->
+                        persistTopLevel(layers.copy(wafs = enabled))
+                        wafsActiveProducts = if (enabled) allWafsIds else emptySet()
+                        if (!enabled) {
+                            wafsFrames = emptyMap()
+                            wafsErrors = emptyMap()
+                        }
                     }
+
                     KickerV("PRODUCT")
+                    Text(
+                        "Tap a product to edit it. Use the layer switch below to show or hide it.",
+                        color = YcMuted,
+                        fontSize = 10.sp,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
                     Row(
                         Modifier.horizontalScroll(rememberScrollState()).padding(bottom = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        listOf(
-                            "edr" to "EDR",
-                            "icing" to "ICING",
-                            "cb_extent" to "CB EXTENT",
-                            "cb_top" to "CB TOPS",
-                            "wind" to "WIND"
-                        ).forEach { (value, label) ->
-                            OptionChipV(label, wafsProduct == value) { wafsProduct = value }
+                        FINAL_WAFS_PRODUCTS.forEach { product ->
+                            FinalWafsProductChip(
+                                label = product.label,
+                                active = product.id in wafsActiveProducts,
+                                selected = product.id == wafsSelectedProduct,
+                                onClick = { wafsSelectedProduct = product.id }
+                            )
                         }
                     }
 
-                    KickerV("FLIGHT LEVEL")
-                    Text("FL$wafsFl", color = YcText, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-                    Slider(
-                        value = wafsFl.toFloat(),
-                        onValueChange = { wafsFl = (it / 10f).toInt() * 10 },
-                        valueRange = 50f..600f,
-                        steps = 54
-                    )
+                    FinalZoomToggle(
+                        selectedConfig.label,
+                        if (selectedActive) "layer on" else "layer off",
+                        selectedActive
+                    ) { enabled ->
+                        setWafsProductEnabled(wafsSelectedProduct, enabled)
+                    }
+
+                    if (selectedLevels != null && selectedFl != null) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                KickerV("FLIGHT LEVEL")
+                                Text(
+                                    "FL$selectedFl",
+                                    color = YcText,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 13.sp
+                                )
+                            }
+                            FinalWafsStepButton(Icons.Outlined.Remove, "Previous level") {
+                                val index = selectedLevels.indexOf(selectedFl)
+                                if (index > 0) setWafsLevel(wafsSelectedProduct, selectedLevels[index - 1])
+                            }
+                            Spacer(Modifier.width(6.dp))
+                            FinalWafsStepButton(Icons.Outlined.Add, "Next level") {
+                                val index = selectedLevels.indexOf(selectedFl)
+                                if (index >= 0 && index < selectedLevels.lastIndex) {
+                                    setWafsLevel(wafsSelectedProduct, selectedLevels[index + 1])
+                                }
+                            }
+                        }
+
+                        Row(
+                            Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 9.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            selectedLevels.forEach { level ->
+                                OptionChipV("FL$level", selectedFl == level) {
+                                    setWafsLevel(wafsSelectedProduct, level)
+                                }
+                            }
+                        }
+                    } else {
+                        KickerV("FLIGHT LEVEL")
+                        Text(
+                            "No flight-level selection for ${selectedConfig.label}.",
+                            color = YcMuted,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            modifier = Modifier.padding(bottom = 12.dp)
+                        )
+                    }
 
                     KickerV("OPACITY")
-                    Text("${(wafsOpacity * 100).toInt()}%", color = YcText, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                    Text(
+                        "${(selectedOpacity * 100).toInt()}%",
+                        color = YcText,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp
+                    )
                     Slider(
-                        value = wafsOpacity,
-                        onValueChange = { wafsOpacity = it },
+                        value = selectedOpacity,
+                        onValueChange = { value ->
+                            wafsOpacities = wafsOpacities +
+                                (wafsSelectedProduct to value.coerceIn(0.1f, 0.9f))
+                        },
                         valueRange = 0.1f..0.9f
                     )
 
-                    wafsError?.let { ErrorBoxV("WAFS · $it") }
+                    wafsErrors[wafsSelectedProduct]?.let {
+                        ErrorBoxV("${selectedConfig.label} · $it")
+                    }
                     Spacer(Modifier.padding(bottom = 24.dp))
                 }
             }
@@ -572,6 +735,60 @@ private fun FinalZoomToggle(
                 uncheckedThumbColor = YcMuted,
                 uncheckedTrackColor = YcSurfaceHigh
             )
+        )
+    }
+}
+
+@Composable
+private fun FinalWafsProductChip(
+    label: String,
+    active: Boolean,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        color = if (active) YcCyan.copy(alpha = 0.16f) else YcSurfaceHigh,
+        border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected || active) YcCyan else YcHairline),
+        shape = RoundedCornerShape(5.dp)
+    ) {
+        Row(
+            Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                if (active) "● " else "○ ",
+                color = if (active) YcCyan else YcMuted,
+                fontSize = 8.sp
+            )
+            Text(
+                label,
+                color = if (active) YcCyanSoft else YcMuted,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                fontSize = 9.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun FinalWafsStepButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    description: String,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        color = YcSurfaceHigh,
+        border = BorderStroke(1.dp, YcHairline),
+        shape = RoundedCornerShape(5.dp)
+    ) {
+        Icon(
+            icon,
+            contentDescription = description,
+            tint = YcCyan,
+            modifier = Modifier.padding(9.dp).size(17.dp)
         )
     }
 }
