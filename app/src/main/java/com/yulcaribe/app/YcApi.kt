@@ -467,6 +467,47 @@ object YcApi {
         )
     }
 
+    suspend fun modelWind(briefing: Briefing): List<ModelWindPoint> =
+        withContext(Dispatchers.IO) {
+            if (briefing.route.size < 2) error("modelwx.php · rota verisi yok.")
+
+            val start = briefing.etdUtc?.let { runCatching { Instant.parse(it) }.getOrNull() }
+                ?: Instant.now()
+            val end = briefing.estimatedArrivalUtc?.let { runCatching { Instant.parse(it) }.getOrNull() }
+                ?: start
+            val mid = start.plusMillis(
+                kotlin.math.max(0L, end.toEpochMilli() - start.toEpochMilli()) / 2L
+            )
+            val valid = mid.toString().take(16).replace("T", " ")
+            val box = ModelWindDecoder.routeBbox(briefing.route)
+
+            val url = BASE + "/modelwx.php?action=gfs025" +
+                "&fl=" + briefing.cruiseFl.coerceIn(50, 600) +
+                "&valid=" + enc(valid) +
+                "&left=" + box.left +
+                "&right=" + box.right +
+                "&bottom=" + box.bottom +
+                "&top=" + box.top
+
+            val response = request(url, "application/octet-stream,*/*;q=0.8")
+            val contentType = response.headers.entries
+                .firstOrNull { it.key.equals("Content-Type", true) }
+                ?.value
+                ?.firstOrNull()
+                .orEmpty()
+
+            if (response.code !in 200..299 || contentType.contains("json", true)) {
+                val detail = runCatching {
+                    JSONObject(response.body.toString(Charsets.UTF_8))
+                        .optString("error")
+                        .ifBlank { "Model wind request failed" }
+                }.getOrDefault("Model wind request failed")
+                error("modelwx.php · HTTP " + response.code + " · " + detail)
+            }
+
+            ModelWindDecoder.decode(response.body, briefing)
+        }
+
     suspend fun wafsFrame(
         product: String,
         fl: Int,
