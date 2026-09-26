@@ -17,6 +17,13 @@ import kotlin.math.sinh
 
 object YcApi {
     const val BASE = "https://yulcaribe.com/main/api/v1"
+    private val airportSearchCache = java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<String, Pair<Long, List<Airport>>>(64, 0.75f, true) {
+            override fun removeEldestEntry(
+                eldest: MutableMap.MutableEntry<String, Pair<Long, List<Airport>>>?
+            ): Boolean = size > 64
+        }
+    )
 
     private val localAirportFallbacks = listOf(
         Airport(0, "LTAI", "AYT", "Antalya Airport", "Antalya", 36.8987, 30.8005, 177),
@@ -108,12 +115,21 @@ object YcApi {
             if (normalized.length < 2) return@withContext emptyList()
 
             val needle = normalized.uppercase()
+            val cacheKey = needle + "|" + limit.coerceIn(1, 50)
+            airportSearchCache[cacheKey]?.let { (at, rows) ->
+                if (System.currentTimeMillis() - at < 120_000) return@withContext rows
+            }
+
             val localMatches = localAirportFallbacks.filter { airport ->
                 airport.icao == needle ||
                     airport.iata?.uppercase() == needle ||
                     airport.name.uppercase().contains(needle) ||
                     airport.city?.uppercase()?.contains(needle) == true
             }
+
+            val exact = if (needle.matches(Regex("^[A-Z0-9]{3,4}$"))) {
+                runCatching { airportDetail(needle) }.getOrNull()
+            } else null
 
             val remoteMatches = runCatching {
                 val json = httpJson(
@@ -123,15 +139,19 @@ object YcApi {
                 parseAirports(json.optJSONArray("items"))
             }.getOrDefault(emptyList())
 
-            (localMatches + remoteMatches)
+            val rows = (listOfNotNull(exact) + localMatches + remoteMatches)
                 .distinctBy { it.icao.uppercase() }
                 .sortedWith(
                     compareByDescending<Airport> { it.icao.equals(needle, true) }
                         .thenByDescending { it.iata?.equals(needle, true) == true }
                         .thenByDescending { it.city?.equals(normalized, true) == true }
+                        .thenByDescending { it.name.equals(normalized, true) }
                         .thenBy { it.icao }
                 )
                 .take(limit.coerceIn(1, 50))
+
+            airportSearchCache[cacheKey] = System.currentTimeMillis() to rows
+            rows
         }
 
     suspend fun airportDetail(ident: String): Airport = withContext(Dispatchers.IO) {
@@ -268,6 +288,35 @@ object YcApi {
             "&at=" + enc(at.toString())
         val json = httpJson(url)
         json.optJSONObject("data")?.toString() ?: emptyFeatureCollection()
+    }
+
+    suspend fun adsb(viewport: Viewport): AdsbSnapshot = withContext(Dispatchers.IO) {
+        val latSpan = (viewport.north - viewport.south).coerceAtLeast(0.05)
+        val lonSpan = (viewport.east - viewport.west).coerceAtLeast(0.05)
+        val south = (viewport.south - latSpan * 0.35).coerceAtLeast(-90.0)
+        val north = (viewport.north + latSpan * 0.35).coerceAtMost(90.0)
+        val west = (viewport.west - lonSpan * 0.35).coerceAtLeast(-180.0)
+        val east = (viewport.east + lonSpan * 0.35).coerceAtMost(180.0)
+
+        if (west >= east || south >= north) {
+            error("adsb.php · unsupported viewport box")
+        }
+
+        val box = listOf(south, north, west, east)
+            .joinToString(",") { String.format(java.util.Locale.US, "%.6f", it) }
+        val response = request(
+            BASE + "/adsb.php?action=feed&box=" + enc(box),
+            "application/zstd,application/octet-stream,*/*"
+        )
+        if (response.code !in 200..299) {
+            val detail = runCatching {
+                JSONObject(response.body.toString(Charsets.UTF_8))
+                    .optString("error")
+                    .ifBlank { "ADS-B request failed" }
+            }.getOrDefault("ADS-B request failed")
+            error("adsb.php · HTTP " + response.code + " · " + detail)
+        }
+        AdsbBinCraft.decodeZstd(response.body)
     }
 
     suspend fun flights(lat: Double, lon: Double, radiusNm: Int): List<Aircraft> =
