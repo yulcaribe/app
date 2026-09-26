@@ -19,7 +19,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             var appearance by remember { mutableStateOf(loadAppearanceMode(this)) }
             YulCaribeTheme(appearance = appearance) {
-                YulCaribeApp(onAppearanceChanged = { appearance = it })
+                YulCaribeAppVNext(onAppearanceChanged = { appearance = it })
             }
         }
     }
