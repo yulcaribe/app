@@ -49,6 +49,14 @@ jobs:
             keytool -genkeypair -v               -keystore "$HOME/.android/debug.keystore"               -storepass android               -alias androiddebugkey               -keypass android               -keyalg RSA               -keysize 2048               -validity 10000               -dname "CN=YulCaribe Debug,O=YulCaribe,C=TR"
           fi
 
+      - name: Download pinned GRIB2Tools
+        shell: bash
+        run: |
+          mkdir -p app/libs
+          curl --fail --location --retry 3 \
+            "https://raw.githubusercontent.com/philippphb/GRIB2Tools/479142eaf75e00a57ae4a10e0fd31e51bf5c9542/lib/GRIB2Tools.jar" \
+            --output app/libs/GRIB2Tools.jar
+
       - name: Build debug APK
         run: gradle --no-daemon :app:assembleDebug
 
