@@ -91,8 +91,8 @@ import kotlin.math.sqrt
 
 private enum class Destination(val label: String, val icon: ImageVector) {
     Home("Home", Icons.Outlined.Home),
+    NavMap("Map", Icons.Outlined.Map),
     Briefing("Pilot Briefing", Icons.Outlined.FlightTakeoff),
-    NavMap("NavMap", Icons.Outlined.Map),
     Settings("Settings", Icons.Outlined.Settings)
 }
 
@@ -103,17 +103,17 @@ data class AppPreferences(
 )
 
 private data class MapLayers(
-    val charts: Boolean = true,
+    val charts: Boolean = false,
     val airports: Boolean = true,
     val navaids: Boolean = true,
-    val waypoints: Boolean = false,
+    val waypoints: Boolean = true,
     val airways: Boolean = true,
-    val sid: Boolean = false,
-    val star: Boolean = false,
+    val sid: Boolean = true,
+    val star: Boolean = true,
     val airspace: Boolean = true,
     val notam: Boolean = false,
     val wafs: Boolean = false,
-    val adsb: Boolean = false
+    val adsb: Boolean = true
 ) {
     fun chartSet(): Set<String> = buildSet {
         if (!charts) return@buildSet
@@ -239,7 +239,6 @@ private fun HomeScreen(prefs: AppPreferences) {
     var searchGeneration by remember { mutableIntStateOf(0) }
     var showResults by rememberSaveable { mutableStateOf(false) }
     var weather by remember { mutableStateOf<WeatherBundle?>(null) }
-    var notams by remember { mutableStateOf<NotamPage?>(null) }
     var charts by remember { mutableStateOf(emptyGeoJson()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -278,32 +277,23 @@ private fun HomeScreen(prefs: AppPreferences) {
         loading = true
         error = null
         val viewport = airportViewport(activeAirport, 7)
-        val result = runCatching {
-            coroutineScope {
-                val chartTask = async {
-                    YcApi.chartViewport(
-                        viewport,
-                        setOf("airport", "navaid", "airway", "airspace")
-                    )
-                }
-                if (showResults) {
-                    val weatherTask = async { YcApi.weather(activeAirport.icao) }
-                    val notamTask = async { YcApi.notamsForAirport(activeAirport.icao, 200) }
-                    Triple(chartTask.await(), weatherTask.await(), notamTask.await())
-                } else {
-                    Triple(chartTask.await(), null, null)
-                }
-            }
+        val chartResult = runCatching {
+            YcApi.chartViewport(
+                viewport,
+                setOf("airport", "navaid", "airway", "airspace")
+            )
         }
-        result.onSuccess { payload ->
-            charts = payload.first
-            if (showResults) {
-                weather = payload.second
-                notams = payload.third
-                apiOk = true
-            }
-        }.onFailure {
-            error = it.message ?: "YulCaribe API request failed."
+        chartResult.onSuccess { charts = it }
+
+        if (showResults) {
+            runCatching { YcApi.weather(activeAirport.icao) }
+                .onSuccess {
+                    weather = it
+                    apiOk = true
+                }
+                .onFailure {
+                    error = it.message ?: "Weather request failed."
+                }
         }
         loading = false
     }
@@ -313,7 +303,6 @@ private fun HomeScreen(prefs: AppPreferences) {
         query = airport.icao
         matches = emptyList()
         weather = null
-        notams = null
         showResults = true
         focus.clearFocus()
     }
@@ -521,7 +510,6 @@ private fun HomeScreen(prefs: AppPreferences) {
                         )
                     }
 
-                    NotamSection(notams, prefs)
                 }
             }
         }
