@@ -5,24 +5,42 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import kotlin.math.ln
 
 object AdsbBinCraft {
-    fun decodeZstd(compressed: ByteArray): AdsbSnapshot {
+    private val zstdMagic = byteArrayOf(0x28, 0xB5.toByte(), 0x2F, 0xFD.toByte())
+
+    fun decodeZstd(payload: ByteArray): AdsbSnapshot {
+        if (payload.isEmpty()) error("ADS-B feed returned an empty payload")
+
+        // Some HTTP stacks/upstreams may already hand us the decompressed binCraft body.
+        // Detect the frame instead of blindly trying to decompress every response.
+        val looksCompressed = payload.size >= 4 &&
+            payload[0] == zstdMagic[0] &&
+            payload[1] == zstdMagic[1] &&
+            payload[2] == zstdMagic[2] &&
+            payload[3] == zstdMagic[3]
+
+        if (!looksCompressed) return parse(payload)
+
         val raw = ByteArrayOutputStream()
-        ZstdInputStream(ByteArrayInputStream(compressed)).use { input ->
-            val buffer = ByteArray(32 * 1024)
-            while (true) {
-                val n = input.read(buffer)
-                if (n <= 0) break
-                raw.write(buffer, 0, n)
+        try {
+            ZstdInputStream(ByteArrayInputStream(payload)).use { input ->
+                val buffer = ByteArray(32 * 1024)
+                while (true) {
+                    val n = input.read(buffer)
+                    if (n <= 0) break
+                    raw.write(buffer, 0, n)
+                }
             }
+        } catch (failure: Throwable) {
+            error("ADS-B zstd decode failed: ${failure.message ?: failure.javaClass.simpleName}")
         }
+
         return parse(raw.toByteArray())
     }
 
     fun parse(bytes: ByteArray): AdsbSnapshot {
-        if (bytes.size < 52) error("binCraft header too short")
+        if (bytes.size < 52) error("binCraft header too short (${bytes.size} bytes)")
 
         val bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
         fun u32(index: Int): Long = bb.getInt(index * 4).toLong() and 0xffffffffL
@@ -31,7 +49,7 @@ object AdsbBinCraft {
         val version = u32(10).toInt()
 
         if (stride !in 108..256 || bytes.size < stride) {
-            error("Unexpected binCraft stride: $stride")
+            error("Unexpected binCraft stride: $stride (${bytes.size} bytes)")
         }
 
         val sourceNowSeconds = u32(0) / 1000.0 + u32(1) * 4294967.296
