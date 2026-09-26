@@ -39,7 +39,7 @@ object AdsbBinCraft {
 
         var off = stride
         while (off + stride <= bytes.size) {
-            val row = ByteBuffer.wrap(bytes, off, stride).order(ByteOrder.LITTLE_ENDIAN)
+            val row = ByteBuffer.wrap(bytes, off, stride).slice().order(ByteOrder.LITTLE_ENDIAN)
 
             fun s32(byteOffset: Int): Int = row.getInt(byteOffset)
             fun u16(byteOffset: Int): Int = row.getShort(byteOffset).toInt() and 0xffff
