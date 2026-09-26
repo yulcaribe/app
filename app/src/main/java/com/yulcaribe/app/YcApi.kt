@@ -414,7 +414,9 @@ object YcApi {
                         role = row.optString("role", "enroute"),
                         metarRaw = metar?.optNullableString("raw"),
                         tafRaw = taf?.optNullableString("raw"),
-                        flightCategory = metar?.optNullableString("flightCategory")
+                        flightCategory = metar?.optNullableString("flightCategory"),
+                        lat = row.optNullableDouble("lat"),
+                        lon = row.optNullableDouble("lon")
                     )
                 )
             }
@@ -431,7 +433,8 @@ object YcApi {
                         proximity = row.optNullableString("proximity"),
                         timeRelation = row.optNullableString("timeRelation"),
                         cruiseRelation = row.optNullableString("cruiseRelation"),
-                        raw = row.optNullableString("raw")
+                        raw = row.optNullableString("raw"),
+                        featureJson = row.optJSONObject("feature")?.toString()
                     )
                 )
             }
