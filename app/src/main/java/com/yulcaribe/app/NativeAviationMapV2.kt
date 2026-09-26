@@ -1,6 +1,10 @@
 package com.yulcaribe.app
 
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Path
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -36,6 +40,10 @@ import org.maplibre.android.style.layers.PropertyFactory.lineColor
 import org.maplibre.android.style.layers.PropertyFactory.lineOpacity
 import org.maplibre.android.style.layers.PropertyFactory.lineWidth
 import org.maplibre.android.style.layers.PropertyFactory.rasterOpacity
+import org.maplibre.android.style.layers.PropertyFactory.iconAllowOverlap
+import org.maplibre.android.style.layers.PropertyFactory.iconImage
+import org.maplibre.android.style.layers.PropertyFactory.iconRotate
+import org.maplibre.android.style.layers.PropertyFactory.iconSize
 import org.maplibre.android.style.layers.PropertyFactory.textColor
 import org.maplibre.android.style.layers.PropertyFactory.textField
 import org.maplibre.android.style.layers.PropertyFactory.textHaloColor
@@ -95,6 +103,7 @@ fun NativeAviationMapV2(
     routePoints: List<RoutePoint> = emptyList(),
     fitRoute: Boolean = false,
     wafsFrame: WafsFrame? = null,
+    wafsOpacity: Float = 0.48f,
     onViewportChanged: (Viewport) -> Unit = {}
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -202,7 +211,7 @@ fun NativeAviationMapV2(
         }
     }
 
-    LaunchedEffect(wafsFrame, styleReady) {
+    LaunchedEffect(wafsFrame, wafsOpacity, styleReady) {
         if (!styleReady) return@LaunchedEffect
         mapRef?.getStyle { style ->
             if (wafsFrame == null) {
@@ -225,11 +234,14 @@ fun NativeAviationMapV2(
             if (existing != null) {
                 existing.setCoordinates(quad)
                 existing.setImage(bitmap)
+                style.getLayer(V2_WAFS_LAYER)?.setProperties(
+                    rasterOpacity(wafsOpacity.coerceIn(0.08f, 0.95f))
+                )
             } else {
                 style.addSource(ImageSource(V2_WAFS, quad, bitmap))
                 style.addLayerAbove(
                     RasterLayer(V2_WAFS_LAYER, V2_WAFS).withProperties(
-                        rasterOpacity(0.48f)
+                        rasterOpacity(wafsOpacity.coerceIn(0.08f, 0.95f))
                     ),
                     "osm-base"
                 )
@@ -251,6 +263,7 @@ private fun updateGeo(
 }
 
 private fun setupV2(style: Style) {
+    style.addImage("v2-aircraft-icon", aircraftBitmapV2())
     style.addSource(GeoJsonSource(V2_CHARTS, emptyGeoJsonV2()))
     style.addSource(GeoJsonSource(V2_NOTAMS, emptyGeoJsonV2()))
     style.addSource(GeoJsonSource(V2_AIRCRAFT, emptyGeoJsonV2()))
@@ -356,12 +369,12 @@ private fun setupV2(style: Style) {
     )
 
     style.addLayer(
-        CircleLayer("v2-aircraft-dot", V2_AIRCRAFT)
+        SymbolLayer("v2-aircraft-icon-layer", V2_AIRCRAFT)
             .withProperties(
-                circleColor("#f4f8fb"),
-                circleRadius(4.8f),
-                circleStrokeColor("#071019"),
-                circleStrokeWidth(1.2f)
+                iconImage("v2-aircraft-icon"),
+                iconSize(0.72f),
+                iconRotate(Expression.get("track")),
+                iconAllowOverlap(true)
             )
     )
     style.addLayer(
@@ -413,3 +426,45 @@ private fun layerEqV2(name: String): Expression =
 
 private fun emptyGeoJsonV2(): String =
     """{"type":"FeatureCollection","features":[]}"""
+
+
+private fun aircraftBitmapV2(): Bitmap {
+    val size = 64
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.rgb(244, 248, 251)
+        style = Paint.Style.FILL
+    }
+    val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.rgb(7, 16, 25)
+        style = Paint.Style.STROKE
+        strokeWidth = 2.4f
+        strokeJoin = Paint.Join.ROUND
+    }
+    val path = Path().apply {
+        moveTo(32f, 3f)
+        cubicTo(29.8f, 3f, 28.7f, 5.4f, 28.4f, 8.4f)
+        lineTo(26.8f, 25.2f)
+        lineTo(7f, 34.4f)
+        lineTo(7f, 39f)
+        lineTo(27.8f, 34.4f)
+        lineTo(28.2f, 49.5f)
+        lineTo(20.2f, 55.5f)
+        lineTo(20.2f, 59f)
+        lineTo(32f, 56f)
+        lineTo(43.8f, 59f)
+        lineTo(43.8f, 55.5f)
+        lineTo(35.8f, 49.5f)
+        lineTo(36.2f, 34.4f)
+        lineTo(57f, 39f)
+        lineTo(57f, 34.4f)
+        lineTo(37.2f, 25.2f)
+        lineTo(35.6f, 8.4f)
+        cubicTo(35.3f, 5.4f, 34.2f, 3f, 32f, 3f)
+        close()
+    }
+    canvas.drawPath(path, fill)
+    canvas.drawPath(path, stroke)
+    return bitmap
+}
