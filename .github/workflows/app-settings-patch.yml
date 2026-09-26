@@ -64,7 +64,7 @@ jobs:
                   saveAppPreferences(context, value)
               }''')
 
-          must_replace('containerColor = Color(0xF20A0E13),', 'containerColor = YcSurface.copy(alpha = 0.96f),')
+          s = s.replace('containerColor = Color(0xF20A0E13),', 'containerColor = YcSurface.copy(alpha = 0.96f),')
           must_replace('Destination.NavMap -> NavMapScreen()', 'Destination.NavMap -> NavMapScreen(prefs)')
           must_replace('Destination.Settings -> SettingsScreen(prefs) { prefs = it }', 'Destination.Settings -> SettingsScreen(prefs, ::updatePreferences)')
 
@@ -99,36 +99,15 @@ jobs:
                   }
               }''')
 
+          # Main web currently fetches ADS-B above zoom 4.2 and renders at 32 ms.
+          # Viewport zoom is integer on Android, so 5 is the safe equivalent.
           s = s.replace('if (viewport.zoom >= 4) {', 'if (viewport.zoom >= 5) {')
           s = s.replace('delay(80)', 'delay(32)')
 
-          # Make the timeline close/collapse action explicit instead of a mystery chevron.
-          must_replace(
-          '''                        Icon(
-                              Icons.Outlined.KeyboardArrowDown,
-                              contentDescription = "Close timeline",
-                              tint = YcMuted,
-                              modifier = Modifier.padding(4.dp).size(18.dp)
-                          )''',
-          '''                        Row(
-                              Modifier.padding(horizontal = 5.dp, vertical = 3.dp),
-                              verticalAlignment = Alignment.CenterVertically
-                          ) {
-                              Text(
-                                  "CLOSE",
-                                  color = YcMuted,
-                                  fontFamily = FontFamily.Monospace,
-                                  fontSize = 8.sp
-                              )
-                              Icon(
-                                  Icons.Outlined.KeyboardArrowDown,
-                                  contentDescription = "Close timeline",
-                                  tint = YcMuted,
-                                  modifier = Modifier.size(18.dp)
-                              )
-                          }''')
+          # The existing down-chevron already closes the expanded timeline back to its compact tab.
+          # Keep it explicit via its content description, but do not occupy map space with another control.
 
-          # Respect light appearance for chrome/panels while preserving the aviation map itself.
+          # Respect light appearance for app chrome/panels while preserving the aviation map itself.
           s = s.replace('Color(0xFF0B1016)', 'YcSurface')
           s = s.replace('Color(0xF20B1016)', 'YcSurface.copy(alpha = 0.95f)')
           s = s.replace('Color(0xE60B1016)', 'YcSurface.copy(alpha = 0.90f)')
@@ -271,30 +250,30 @@ jobs:
 
           prefs_helpers = '''
 
-          private fun loadAppPreferences(context: Context): AppPreferences {
-              val store = context.getSharedPreferences("yulcaribe_preferences", Context.MODE_PRIVATE)
-              return AppPreferences(
-                  showRaw = store.getBoolean("show_raw", true),
-                  showDecoded = store.getBoolean("show_decoded", true),
-                  showExplanation = store.getBoolean("show_explanation", true),
-                  mainAirportIcao = store.getString("main_airport", "LTFM")
-                      ?.trim()
-                      ?.uppercase()
-                      ?.takeIf { it.matches(Regex("^[A-Z0-9]{3,4}$")) }
-                      ?: "LTFM"
-              )
-          }
+private fun loadAppPreferences(context: Context): AppPreferences {
+    val store = context.getSharedPreferences("yulcaribe_preferences", Context.MODE_PRIVATE)
+    return AppPreferences(
+        showRaw = store.getBoolean("show_raw", true),
+        showDecoded = store.getBoolean("show_decoded", true),
+        showExplanation = store.getBoolean("show_explanation", true),
+        mainAirportIcao = store.getString("main_airport", "LTFM")
+            ?.trim()
+            ?.uppercase()
+            ?.takeIf { it.matches(Regex("^[A-Z0-9]{3,4}$")) }
+            ?: "LTFM"
+    )
+}
 
-          private fun saveAppPreferences(context: Context, prefs: AppPreferences) {
-              context.getSharedPreferences("yulcaribe_preferences", Context.MODE_PRIVATE)
-                  .edit()
-                  .putBoolean("show_raw", prefs.showRaw)
-                  .putBoolean("show_decoded", prefs.showDecoded)
-                  .putBoolean("show_explanation", prefs.showExplanation)
-                  .putString("main_airport", prefs.mainAirportIcao.uppercase())
-                  .apply()
-          }
-          '''
+private fun saveAppPreferences(context: Context, prefs: AppPreferences) {
+    context.getSharedPreferences("yulcaribe_preferences", Context.MODE_PRIVATE)
+        .edit()
+        .putBoolean("show_raw", prefs.showRaw)
+        .putBoolean("show_decoded", prefs.showDecoded)
+        .putBoolean("show_explanation", prefs.showExplanation)
+        .putString("main_airport", prefs.mainAirportIcao.uppercase())
+        .apply()
+}
+'''
           if 'private fun loadAppPreferences(context: Context)' not in s:
               s = s.rstrip() + prefs_helpers + '\n'
 
