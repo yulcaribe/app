@@ -1,5 +1,6 @@
 package com.yulcaribe.app
 
+import android.content.Context
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -10,6 +11,23 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+
+enum class AppearanceMode(val storedValue: String) {
+    System("system"),
+    Light("light"),
+    Dark("dark");
+
+    companion object {
+        fun fromStored(value: String?): AppearanceMode =
+            entries.firstOrNull { it.storedValue == value?.lowercase() } ?: System
+    }
+}
+
+fun loadAppearanceMode(context: Context): AppearanceMode =
+    AppearanceMode.fromStored(
+        context.getSharedPreferences("yulcaribe_preferences", Context.MODE_PRIVATE)
+            .getString("appearance", AppearanceMode.System.storedValue)
+    )
 
 private object YcRuntimePalette {
     var dark: Boolean = true
@@ -39,8 +57,16 @@ val YcRed: Color
     get() = if (YcRuntimePalette.dark) Color(0xFFFF5F6D) else Color(0xFFB3261E)
 
 @Composable
-fun YulCaribeTheme(content: @Composable () -> Unit) {
-    val dark = isSystemInDarkTheme()
+fun YulCaribeTheme(
+    appearance: AppearanceMode = AppearanceMode.System,
+    content: @Composable () -> Unit
+) {
+    val systemDark = isSystemInDarkTheme()
+    val dark = when (appearance) {
+        AppearanceMode.System -> systemDark
+        AppearanceMode.Light -> false
+        AppearanceMode.Dark -> true
+    }
     YcRuntimePalette.dark = dark
 
     val colors = if (dark) {
@@ -54,6 +80,7 @@ fun YulCaribeTheme(content: @Composable () -> Unit) {
             onSurface = YcText,
             surfaceVariant = YcSurfaceHigh,
             onSurfaceVariant = YcMuted,
+            outline = YcHairline,
             error = YcRed
         )
     } else {
