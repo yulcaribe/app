@@ -26,10 +26,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.FlightTakeoff
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Map
+import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
@@ -1078,6 +1082,7 @@ private fun NavMapScreen() {
     var refreshToken by remember { mutableIntStateOf(0) }
     var loadGeneration by remember { mutableIntStateOf(0) }
     var timeOffsetHours by remember { mutableFloatStateOf(0f) }
+    var timelineExpanded by rememberSaveable { mutableStateOf(false) }
     var wafsProduct by remember { mutableStateOf("edr") }
     var wafsFl by remember { mutableIntStateOf(340) }
 
@@ -1116,17 +1121,7 @@ private fun NavMapScreen() {
             }
 
             val adsbTask = async {
-                if (layers.adsb) {
-                    runCatching {
-                        val lat = (viewport.north + viewport.south) / 2.0
-                        val lon = midpointLongitude(viewport.west, viewport.east)
-                        YcApi.flightsGeoJson(
-                            YcApi.flights(lat, lon, viewportRadiusNm(viewport))
-                        )
-                    }
-                } else {
-                    Result.success(emptyGeoJson())
-                }
+                Result.success(flightsGeo)
             }
 
             val wafsTask = async {
@@ -1168,16 +1163,6 @@ private fun NavMapScreen() {
             )
             notamLoading = false
 
-            adsbResult.fold(
-                onSuccess = {
-                    flightsGeo = it
-                    adsbError = null
-                    if (layers.adsb) apiOk = true
-                },
-                onFailure = {
-                    adsbError = it.message ?: "ADS-B request failed."
-                }
-            )
             adsbLoading = false
 
             wafsResult.fold(
@@ -1191,6 +1176,32 @@ private fun NavMapScreen() {
                 }
             )
             wafsLoading = false
+        }
+    }
+
+    LaunchedEffect(viewport, layers.adsb, refreshToken) {
+        if (!layers.adsb) {
+            flightsGeo = emptyGeoJson()
+            adsbError = null
+            adsbLoading = false
+            return@LaunchedEffect
+        }
+
+        while (true) {
+            if (viewport.zoom >= 4) {
+                adsbLoading = flightsGeo == emptyGeoJson()
+                runCatching { YcApi.adsb(viewport) }
+                    .onSuccess {
+                        flightsGeo = YcApi.flightsGeoJson(it.aircraft)
+                        adsbError = null
+                        apiOk = true
+                    }
+                    .onFailure {
+                        adsbError = it.message ?: "ADS-B request failed."
+                    }
+                adsbLoading = false
+            }
+            delay(2000)
         }
     }
 
