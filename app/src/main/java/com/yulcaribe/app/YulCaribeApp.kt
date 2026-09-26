@@ -2012,7 +2012,7 @@ private fun SettingsScreen(
                 Kicker("AIRPORT RESULTS")
                 SettingToggle(
                     "Show RAW",
-                    "Original METAR, TAF and NOTAM source text.",
+                    "Original METAR and TAF source text.",
                     prefs.showRaw
                 ) { onChange(prefs.copy(showRaw = it)) }
 
