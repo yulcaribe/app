@@ -16,6 +16,15 @@ android {
         versionName = if (ciRun != null) "0.3." + ciRun else "0.3.0"
     }
 
+    buildTypes {
+        getByName("debug") {
+            // Debug APK installs side-by-side with release/older signed builds.
+            // This avoids signature/package conflicts during device testing.
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
