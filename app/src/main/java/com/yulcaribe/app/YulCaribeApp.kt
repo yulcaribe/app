@@ -1284,44 +1284,157 @@ private fun NavMapScreen() {
             }
         }
 
-        Column(
-            Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 14.dp)
-                .background(Color(0xF20B1016), RoundedCornerShape(7.dp))
-                .border(1.dp, YcHairline, RoundedCornerShape(7.dp))
-                .padding(horizontal = 12.dp, vertical = 9.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    if (timeOffsetHours == 0f) "NOW"
-                    else (if (timeOffsetHours > 0) "+" else "") + timeOffsetHours.toInt() + "h",
-                    color = YcCyan,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 10.sp
-                )
-                Spacer(Modifier.weight(1f))
-                Text(
-                    "UTC TIMELINE",
-                    color = YcMuted,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 9.sp
-                )
+        if (!timelineExpanded) {
+            Surface(
+                onClick = { timelineExpanded = true },
+                color = Color(0xF20B1016),
+                border = androidx.compose.foundation.BorderStroke(1.dp, YcHairline),
+                shape = RoundedCornerShape(7.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 12.dp)
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        if (timeOffsetHours == 0f) "NOW"
+                        else (if (timeOffsetHours > 0) "+" else "") + timeOffsetHours.toInt() + "h",
+                        color = YcCyan,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 9.sp
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "TIMELINE",
+                        color = YcMuted,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 9.sp
+                    )
+                    Icon(
+                        Icons.Outlined.KeyboardArrowUp,
+                        contentDescription = "Open timeline",
+                        tint = YcMuted,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
+        } else {
+            Column(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 12.dp)
+                    .background(Color(0xF20B1016), RoundedCornerShape(9.dp))
+                    .border(1.dp, YcHairline, RoundedCornerShape(9.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (timeOffsetHours == 0f) "NOW"
+                        else (if (timeOffsetHours > 0) "+" else "") + timeOffsetHours.toInt() + "h",
+                        color = YcCyan,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 10.sp
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        "UTC TIMELINE",
+                        color = YcMuted,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 9.sp
+                    )
+                    Surface(
+                        onClick = { timelineExpanded = false },
+                        color = Color.Transparent,
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Icon(
+                            Icons.Outlined.KeyboardArrowDown,
+                            contentDescription = "Close timeline",
+                            tint = YcMuted,
+                            modifier = Modifier.padding(4.dp).size(18.dp)
+                        )
+                    }
+                }
 
-            Slider(
-                value = timeOffsetHours,
-                onValueChange = { timeOffsetHours = it },
-                valueRange = -24f..24f,
-                steps = 47
-            )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        onClick = {
+                            timeOffsetHours = (timeOffsetHours - 1f).coerceAtLeast(-24f)
+                        },
+                        color = YcSurfaceHigh,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, YcHairline),
+                        shape = RoundedCornerShape(5.dp)
+                    ) {
+                        Row(
+                            Modifier.padding(horizontal = 11.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Outlined.Remove, null, tint = YcCyan, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("-1h", color = YcText, fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+                        }
+                    }
 
-            LayerErrorLine("CHARTS", chartsError)
-            if (layers.notam) LayerErrorLine("NOTAM", notamError)
-            if (layers.wafs) LayerErrorLine("WAFS", wafsError)
-            if (layers.adsb) LayerErrorLine("ADS-B", adsbError)
+                    Spacer(Modifier.width(10.dp))
+
+                    Surface(
+                        onClick = { timeOffsetHours = 0f },
+                        color = YcSurfaceHigh,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, YcHairline),
+                        shape = RoundedCornerShape(5.dp)
+                    ) {
+                        Text(
+                            "NOW",
+                            color = YcCyanSoft,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 10.sp,
+                            modifier = Modifier.padding(horizontal = 15.dp, vertical = 9.dp)
+                        )
+                    }
+
+                    Spacer(Modifier.width(10.dp))
+
+                    Surface(
+                        onClick = {
+                            timeOffsetHours = (timeOffsetHours + 1f).coerceAtMost(24f)
+                        },
+                        color = YcSurfaceHigh,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, YcHairline),
+                        shape = RoundedCornerShape(5.dp)
+                    ) {
+                        Row(
+                            Modifier.padding(horizontal = 11.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Outlined.Add, null, tint = YcCyan, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("+1h", color = YcText, fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+                        }
+                    }
+                }
+
+                Slider(
+                    value = timeOffsetHours,
+                    onValueChange = { timeOffsetHours = it },
+                    valueRange = -24f..24f,
+                    steps = 47
+                )
+
+                LayerErrorLine("CHARTS", chartsError)
+                if (layers.notam) LayerErrorLine("NOTAM", notamError)
+                if (layers.wafs) LayerErrorLine("WAFS", wafsError)
+                if (layers.adsb) LayerErrorLine("ADS-B", adsbError)
+            }
         }
     }
 
