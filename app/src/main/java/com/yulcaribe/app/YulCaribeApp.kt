@@ -294,24 +294,32 @@ private fun HomeScreen(prefs: AppPreferences) {
         loading = true
         error = null
         val viewport = airportViewport(activeAirport, 7)
-        val chartResult = runCatching {
-            YcApi.chartViewport(
-                viewport,
-                setOf("airport", "navaid", "airway", "airspace")
-            )
-        }
-        chartResult.onSuccess { charts = it }
 
-        if (showResults) {
-            runCatching { YcApi.weather(activeAirport.icao) }
-                .onSuccess {
+        coroutineScope {
+            val chartTask = async {
+                runCatching {
+                    YcApi.chartViewport(
+                        viewport,
+                        setOf("airport", "navaid", "airway", "airspace")
+                    )
+                }
+            }
+            val weatherTask = if (showResults) {
+                async { runCatching { YcApi.weather(activeAirport.icao) } }
+            } else null
+
+            weatherTask?.await()?.fold(
+                onSuccess = {
                     weather = it
                     apiOk = true
-                }
-                .onFailure {
+                },
+                onFailure = {
                     error = it.message ?: "Weather request failed."
                 }
+            )
+            chartTask.await().onSuccess { charts = it }
         }
+
         loading = false
     }
 
