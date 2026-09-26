@@ -64,7 +64,9 @@ data class BriefStation(
     val role: String,
     val metarRaw: String?,
     val tafRaw: String?,
-    val flightCategory: String?
+    val flightCategory: String?,
+    val lat: Double? = null,
+    val lon: Double? = null
 )
 
 data class BriefHazard(
@@ -73,7 +75,8 @@ data class BriefHazard(
     val proximity: String?,
     val timeRelation: String?,
     val cruiseRelation: String?,
-    val raw: String?
+    val raw: String?,
+    val featureJson: String? = null
 )
 
 data class RoutePoint(
@@ -105,7 +108,22 @@ data class Aircraft(
     val track: Double?,
     val altitude: String?,
     val groundSpeed: Double?,
-    val squawk: String?
+    val squawk: String?,
+    val seenPosSeconds: Double? = null
+)
+
+data class AdsbSnapshot(
+    val sourceNowMs: Long,
+    val aircraft: List<Aircraft>
+)
+
+data class ModelWindPoint(
+    val lat: Double,
+    val lon: Double,
+    val directionDeg: Double,
+    val speedKt: Double,
+    val progress: Double,
+    val etaUtc: String? = null
 )
 
 data class Viewport(
