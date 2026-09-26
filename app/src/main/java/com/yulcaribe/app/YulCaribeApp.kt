@@ -723,6 +723,9 @@ private fun BriefingScreen() {
     var requestToken by remember { mutableIntStateOf(0) }
     var loading by remember { mutableStateOf(false) }
     var briefing by remember { mutableStateOf<Briefing?>(null) }
+    var modelWinds by remember { mutableStateOf<List<ModelWindPoint>>(emptyList()) }
+    var modelWindLoading by remember { mutableStateOf(false) }
+    var modelWindError by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) { apiOk = YcApi.catalogOk() }
@@ -744,6 +747,8 @@ private fun BriefingScreen() {
 
         val data = result.getOrNull()
         if (data != null) {
+            modelWinds = emptyList()
+            modelWindError = null
             briefing = data
             apiOk = true
         } else {
@@ -751,6 +756,16 @@ private fun BriefingScreen() {
         }
 
         loading = false
+    }
+
+    LaunchedEffect(briefing) {
+        val data = briefing ?: return@LaunchedEffect
+        modelWindLoading = true
+        modelWindError = null
+        runCatching { YcApi.modelWind(data) }
+            .onSuccess { modelWinds = it }
+            .onFailure { modelWindError = it.message ?: "Model wind unavailable." }
+        modelWindLoading = false
     }
 
     LazyColumn(
@@ -824,7 +839,12 @@ private fun BriefingScreen() {
         briefing?.let { data ->
             item {
                 Column(Modifier.padding(horizontal = 20.dp)) {
-                    BriefingMap(data)
+                    BriefingMap(
+                        data = data,
+                        modelWinds = modelWinds,
+                        modelWindLoading = modelWindLoading,
+                        modelWindError = modelWindError
+                    )
                     Spacer(Modifier.height(18.dp))
 
                     BriefingTable(
@@ -838,6 +858,43 @@ private fun BriefingScreen() {
                             "ETA" to (data.estimatedArrivalUtc ?: "—")
                         )
                     )
+
+                    when {
+                        modelWindLoading -> {
+                            BriefingTable(
+                                "MODEL WIND",
+                                "GFS 0.25° · LOADING",
+                                listOf("STATUS" to "Route wind guidance is loading…")
+                            )
+                        }
+                        modelWinds.isNotEmpty() -> {
+                            val picks = listOf(0, modelWinds.lastIndex / 4, modelWinds.lastIndex / 2,
+                                modelWinds.lastIndex * 3 / 4, modelWinds.lastIndex)
+                                .distinct()
+                                .map { modelWinds[it] }
+                            BriefingTable(
+                                "MODEL WIND",
+                                "GFS 0.25°",
+                                picks.map { point ->
+                                    val pct = (point.progress * 100).toInt()
+                                    val dir = point.directionDeg.toInt().toString().padStart(3, '0')
+                                    val tail = point.tailwindKt?.let {
+                                        (if (it >= 0) "TW " else "HW ") + kotlin.math.abs(it).toInt() + "kt"
+                                    } ?: ""
+                                    (pct.toString() + "% ROUTE") to
+                                        (dir + "° / " + point.speedKt.toInt() + "kt" +
+                                            if (tail.isNotBlank()) " · " + tail else "")
+                                }
+                            )
+                        }
+                        modelWindError != null -> {
+                            BriefingTable(
+                                "MODEL WIND",
+                                "UNAVAILABLE",
+                                listOf("STATUS" to modelWindError!!)
+                            )
+                        }
+                    }
 
                     if (data.routeWarnings.isNotEmpty()) {
                         BriefingTable(
@@ -965,12 +1022,18 @@ private fun BriefField(
 }
 
 @Composable
-private fun BriefingMap(data: Briefing) {
+private fun BriefingMap(
+    data: Briefing,
+    modelWinds: List<ModelWindPoint>,
+    modelWindLoading: Boolean,
+    modelWindError: String?
+) {
     var fullScreen by remember { mutableStateOf(false) }
     var layersOpen by remember { mutableStateOf(false) }
     var showRoute by remember { mutableStateOf(true) }
     var showStations by remember { mutableStateOf(true) }
     var showSigmet by remember { mutableStateOf(true) }
+    var showModelWind by remember { mutableStateOf(true) }
     var showCharts by remember { mutableStateOf(false) }
     var showWafs by remember { mutableStateOf(false) }
     var chartGeo by remember { mutableStateOf(emptyGeoJson()) }
@@ -1021,7 +1084,12 @@ private fun BriefingMap(data: Briefing) {
             zoom = 4.0,
             interactive = false,
             routeGeoJson = routeGeoJson(data.route),
-            briefingGeoJson = briefingOverlayGeoJson(data, true, true),
+            briefingGeoJson = briefingOverlayGeoJson(
+                data,
+                includeStations = true,
+                includeHazards = true,
+                winds = modelWinds
+            ),
             routePoints = data.route,
             fitRoute = true,
             modifier = Modifier.fillMaxSize()
@@ -1036,7 +1104,9 @@ private fun BriefingMap(data: Briefing) {
                 .padding(10.dp)
         ) {
             Text(
-                "ROUTE · SIGMET · STATIONS",
+                if (modelWindLoading) "ROUTE · MODEL WIND LOADING…"
+                else if (modelWindError != null && modelWinds.isEmpty()) "ROUTE · MODEL WIND UNAVAILABLE"
+                else "ROUTE · SIGMET · STATIONS · MODEL WIND",
                 color = YcCyan,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 9.sp,
@@ -1089,7 +1159,12 @@ private fun BriefingMap(data: Briefing) {
                     interactive = true,
                     chartsGeoJson = chartGeo,
                     routeGeoJson = if (showRoute) routeGeoJson(data.route) else emptyGeoJson(),
-                    briefingGeoJson = briefingOverlayGeoJson(data, showStations, showSigmet),
+                    briefingGeoJson = briefingOverlayGeoJson(
+                        data,
+                        includeStations = showStations,
+                        includeHazards = showSigmet,
+                        winds = if (showModelWind) modelWinds else emptyList()
+                    ),
                     routePoints = data.route,
                     fitRoute = true,
                     wafsFrame = wafsFrame,
@@ -1166,6 +1241,7 @@ private fun BriefingMap(data: Briefing) {
                         LayerToggle("Route", showRoute) { showRoute = it }
                         LayerToggle("Stations", showStations) { showStations = it }
                         LayerToggle("SIGMET", showSigmet) { showSigmet = it }
+                        LayerToggle("Model wind", showModelWind) { showModelWind = it }
                         LayerToggle("Charts", showCharts) { showCharts = it }
                         LayerToggle("WAFS", showWafs) { showWafs = it }
 
@@ -1199,7 +1275,8 @@ private fun BriefingMap(data: Briefing) {
 private fun briefingOverlayGeoJson(
     data: Briefing,
     includeStations: Boolean,
-    includeHazards: Boolean
+    includeHazards: Boolean,
+    winds: List<ModelWindPoint> = emptyList()
 ): String {
     val features = JSONArray()
 
@@ -1237,6 +1314,37 @@ private fun briefingOverlayGeoJson(
             feature.put("properties", props)
             features.put(feature)
         }
+    }
+
+    winds.forEachIndexed { index, wind ->
+        val prominent = index == 0 ||
+            index == winds.lastIndex ||
+            index % kotlin.math.max(1, winds.size / 8) == 0
+        features.put(
+            JSONObject()
+                .put("type", "Feature")
+                .put(
+                    "geometry",
+                    JSONObject()
+                        .put("type", "Point")
+                        .put("coordinates", JSONArray().put(wind.lon).put(wind.lat))
+                )
+                .put(
+                    "properties",
+                    JSONObject()
+                        .put("kind", "wind")
+                        .put("rotation", (wind.directionDeg + 180.0) % 360.0)
+                        .put(
+                            "speedLabel",
+                            if (prominent) wind.speedKt.toInt().toString() + "kt" else ""
+                        )
+                        .put("direction", wind.directionDeg)
+                        .put("speedKt", wind.speedKt)
+                        .put("tailwindKt", wind.tailwindKt)
+                        .put("crosswindKt", wind.crosswindKt)
+                        .put("progress", wind.progress)
+                )
+        )
     }
 
     return JSONObject()
