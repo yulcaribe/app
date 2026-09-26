@@ -1,5 +1,6 @@
 package com.yulcaribe.app
 
+import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -78,6 +79,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -114,7 +116,8 @@ private enum class Destination(val label: String, val icon: ImageVector) {
 data class AppPreferences(
     val showRaw: Boolean = true,
     val showDecoded: Boolean = true,
-    val showExplanation: Boolean = true
+    val showExplanation: Boolean = true,
+    val mainAirportIcao: String = "LTFM"
 )
 
 private data class MapLayers(
@@ -155,14 +158,20 @@ private val ltfmFallback = Airport(
 
 @Composable
 fun YulCaribeApp() {
+    val context = LocalContext.current
     var destination by rememberSaveable { mutableStateOf(Destination.Home) }
-    var prefs by remember { mutableStateOf(AppPreferences()) }
+    var prefs by remember { mutableStateOf(loadAppPreferences(context)) }
+
+    fun updatePreferences(value: AppPreferences) {
+        prefs = value
+        saveAppPreferences(context, value)
+    }
 
     Scaffold(
         containerColor = YcVoid,
         bottomBar = {
             NavigationBar(
-                containerColor = Color(0xF20A0E13),
+                containerColor = YcSurface.copy(alpha = 0.96f),
                 tonalElevation = 0.dp,
                 modifier = Modifier.border(1.dp, YcHairline)
             ) {
@@ -199,8 +208,8 @@ fun YulCaribeApp() {
             when (destination) {
                 Destination.Home -> HomeScreen(prefs)
                 Destination.Briefing -> BriefingScreen()
-                Destination.NavMap -> NavMapScreen()
-                Destination.Settings -> SettingsScreen(prefs) { prefs = it }
+                Destination.NavMap -> NavMapScreen(prefs)
+                Destination.Settings -> SettingsScreen(prefs, ::updatePreferences)
             }
         }
     }
@@ -260,9 +269,9 @@ private fun HomeScreen(prefs: AppPreferences) {
     var error by remember { mutableStateOf<String?>(null) }
     var refreshToken by remember { mutableIntStateOf(0) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(prefs.mainAirportIcao) {
         apiOk = YcApi.catalogOk()
-        runCatching { YcApi.airportDetail("LTFM") }
+        runCatching { YcApi.airportDetail(prefs.mainAirportIcao) }
             .getOrNull()
             ?.let { activeAirport = it }
     }
@@ -432,7 +441,7 @@ private fun HomeScreen(prefs: AppPreferences) {
                                 modifier = Modifier
                                     .fillMaxWidth(0.94f)
                                     .heightIn(max = 300.dp)
-                                    .background(Color(0xFF0B1016)),
+                                    .background(YcSurface),
                                 properties = PopupProperties(focusable = false)
                             ) {
                                 if (searchBusy && matches.isEmpty()) {
@@ -1104,7 +1113,7 @@ private fun BriefingMap(
         )
 
         Surface(
-            color = Color(0xD90B1016),
+            color = YcSurface.copy(alpha = 0.85f),
             border = androidx.compose.foundation.BorderStroke(1.dp, YcHairline),
             shape = RoundedCornerShape(4.dp),
             modifier = Modifier
@@ -1124,7 +1133,7 @@ private fun BriefingMap(
 
         Surface(
             onClick = { fullScreen = true },
-            color = Color(0xE60B1016),
+            color = YcSurface.copy(alpha = 0.90f),
             border = androidx.compose.foundation.BorderStroke(1.dp, YcHairline),
             shape = RoundedCornerShape(6.dp),
             modifier = Modifier
@@ -1188,7 +1197,7 @@ private fun BriefingMap(
                 ) {
                     Surface(
                         onClick = { fullScreen = false },
-                        color = Color(0xEC0B1016),
+                        color = YcSurface.copy(alpha = 0.93f),
                         border = androidx.compose.foundation.BorderStroke(1.dp, YcHairline),
                         shape = RoundedCornerShape(7.dp)
                     ) {
@@ -1204,7 +1213,7 @@ private fun BriefingMap(
 
                     Surface(
                         onClick = { layersOpen = !layersOpen },
-                        color = Color(0xEC0B1016),
+                        color = YcSurface.copy(alpha = 0.93f),
                         border = androidx.compose.foundation.BorderStroke(1.dp, YcHairline),
                         shape = RoundedCornerShape(7.dp)
                     ) {
@@ -1236,7 +1245,7 @@ private fun BriefingMap(
                             .statusBarsPadding()
                             .padding(top = 68.dp, end = 12.dp)
                             .width(270.dp)
-                            .background(Color(0xF50B1016), RoundedCornerShape(9.dp))
+                            .background(YcSurface.copy(alpha = 0.96f), RoundedCornerShape(9.dp))
                             .border(1.dp, YcHairline, RoundedCornerShape(9.dp))
                             .padding(14.dp)
                     ) {
@@ -1380,7 +1389,7 @@ private enum class MapPanel {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun NavMapScreen() {
+private fun NavMapScreen(prefs: AppPreferences) {
     var apiOk by remember { mutableStateOf(false) }
     var centerAirport by remember { mutableStateOf(ltfmFallback) }
     var viewport by remember { mutableStateOf(airportViewport(ltfmFallback, 7)) }
@@ -1411,9 +1420,9 @@ private fun NavMapScreen() {
     var wafsOpacity by remember { mutableFloatStateOf(0.48f) }
     val adsbBuffer = remember { AdsbTrackBuffer() }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(prefs.mainAirportIcao) {
         apiOk = YcApi.catalogOk()
-        runCatching { YcApi.airportDetail("LTFM") }.getOrNull()?.let {
+        runCatching { YcApi.airportDetail(prefs.mainAirportIcao) }.getOrNull()?.let {
             centerAirport = it
             viewport = airportViewport(it, 7)
         }
@@ -1514,7 +1523,7 @@ private fun NavMapScreen() {
         }
 
         while (true) {
-            if (viewport.zoom >= 4) {
+            if (viewport.zoom >= 5) {
                 adsbLoading = flightsGeo == emptyGeoJson()
                 runCatching { YcApi.adsb(viewport) }
                     .onSuccess {
@@ -1536,7 +1545,7 @@ private fun NavMapScreen() {
         while (true) {
             val rendered = adsbBuffer.render()
             if (rendered.isNotEmpty()) flightsGeo = YcApi.flightsGeoJson(rendered)
-            delay(80)
+            delay(32)
         }
     }
 
@@ -1623,7 +1632,7 @@ private fun NavMapScreen() {
         if (!timelineExpanded) {
             Surface(
                 onClick = { timelineExpanded = true },
-                color = Color(0xF20B1016),
+                color = YcSurface.copy(alpha = 0.95f),
                 border = androidx.compose.foundation.BorderStroke(1.dp, YcHairline),
                 shape = RoundedCornerShape(7.dp),
                 modifier = Modifier
@@ -1663,7 +1672,7 @@ private fun NavMapScreen() {
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .padding(horizontal = 14.dp, vertical = 12.dp)
-                    .background(Color(0xF20B1016), RoundedCornerShape(9.dp))
+                    .background(YcSurface.copy(alpha = 0.95f), RoundedCornerShape(9.dp))
                     .border(1.dp, YcHairline, RoundedCornerShape(9.dp))
                     .padding(horizontal = 12.dp, vertical = 10.dp)
             ) {
@@ -2000,6 +2009,39 @@ private fun SettingsScreen(
     prefs: AppPreferences,
     onChange: (AppPreferences) -> Unit
 ) {
+    val focus = LocalFocusManager.current
+    var airportQuery by rememberSaveable(prefs.mainAirportIcao) { mutableStateOf(prefs.mainAirportIcao) }
+    var airportMatches by remember { mutableStateOf<List<Airport>>(emptyList()) }
+    var airportFocused by remember { mutableStateOf(false) }
+    var airportBusy by remember { mutableStateOf(false) }
+    var airportGeneration by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(airportQuery, airportFocused) {
+        if (!airportFocused) return@LaunchedEffect
+        val normalized = YcApi.normalizeAirportQuery(airportQuery).trim()
+        if (normalized.length < 2) {
+            airportMatches = emptyList()
+            airportBusy = false
+            return@LaunchedEffect
+        }
+        val generation = ++airportGeneration
+        airportBusy = true
+        delay(140)
+        val rows = runCatching { YcApi.airportSearch(normalized, 20) }.getOrDefault(emptyList())
+        if (generation == airportGeneration) {
+            airportMatches = rows
+            airportBusy = false
+        }
+    }
+
+    fun chooseMainAirport(airport: Airport) {
+        airportQuery = airport.icao
+        airportMatches = emptyList()
+        airportFocused = false
+        focus.clearFocus()
+        onChange(prefs.copy(mainAirportIcao = airport.icao))
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 38.dp)
@@ -2017,6 +2059,90 @@ private fun SettingsScreen(
                 )
                 Spacer(Modifier.height(24.dp))
 
+                Kicker("MAIN AIRPORT")
+                Text(
+                    "Home background and Map startup center use this airport.",
+                    color = YcMuted,
+                    fontSize = 10.sp,
+                    lineHeight = 15.sp
+                )
+                Spacer(Modifier.height(9.dp))
+
+                Box(Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = airportQuery,
+                        onValueChange = { airportQuery = it.uppercase() },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onFocusChanged { airportFocused = it.isFocused },
+                        singleLine = true,
+                        leadingIcon = { Icon(Icons.Outlined.Search, null, tint = YcCyan) },
+                        trailingIcon = {
+                            if (airportBusy) Text("…", color = YcCyan, fontSize = 18.sp)
+                        },
+                        placeholder = { Text("ICAO / IATA / city", color = YcMuted) },
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(
+                            onSearch = { airportMatches.firstOrNull()?.let(::chooseMainAirport) }
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+
+                    DropdownMenu(
+                        expanded = airportFocused && airportQuery.trim().length >= 2,
+                        onDismissRequest = { airportFocused = false },
+                        modifier = Modifier
+                            .fillMaxWidth(0.94f)
+                            .heightIn(max = 300.dp)
+                            .background(YcSurface),
+                        properties = PopupProperties(focusable = false)
+                    ) {
+                        if (airportBusy && airportMatches.isEmpty()) {
+                            DropdownMenuItem(
+                                text = { Text("Searching…", color = YcMuted) },
+                                onClick = {}
+                            )
+                        } else if (airportMatches.isEmpty()) {
+                            DropdownMenuItem(
+                                text = { Text("No airport match.", color = YcMuted) },
+                                onClick = {}
+                            )
+                        } else {
+                            airportMatches.forEach { airport ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(
+                                                airport.icao + (airport.iata?.let { " · " + it } ?: ""),
+                                                color = YcCyan,
+                                                fontFamily = FontFamily.Monospace,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Text(
+                                                listOfNotNull(airport.name, airport.city).joinToString(" · "),
+                                                color = YcMuted,
+                                                fontSize = 10.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    },
+                                    onClick = { chooseMainAirport(airport) }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Text(
+                    "Current: " + prefs.mainAirportIcao,
+                    color = YcCyanSoft,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 9.sp,
+                    modifier = Modifier.padding(top = 7.dp)
+                )
+
+                Spacer(Modifier.height(26.dp))
                 Kicker("AIRPORT RESULTS")
                 SettingToggle(
                     "Show RAW",
@@ -2291,3 +2417,28 @@ private fun nearestSupportedWafsLevel(product: String, requested: Int): Int {
     }
     return levels.minByOrNull { kotlin.math.abs(it - requested) } ?: levels.first()
 }
+
+private fun loadAppPreferences(context: Context): AppPreferences {
+    val store = context.getSharedPreferences("yulcaribe_preferences", Context.MODE_PRIVATE)
+    return AppPreferences(
+        showRaw = store.getBoolean("show_raw", true),
+        showDecoded = store.getBoolean("show_decoded", true),
+        showExplanation = store.getBoolean("show_explanation", true),
+        mainAirportIcao = store.getString("main_airport", "LTFM")
+            ?.trim()
+            ?.uppercase()
+            ?.takeIf { it.matches(Regex("^[A-Z0-9]{3,4}$")) }
+            ?: "LTFM"
+    )
+}
+
+private fun saveAppPreferences(context: Context, prefs: AppPreferences) {
+    context.getSharedPreferences("yulcaribe_preferences", Context.MODE_PRIVATE)
+        .edit()
+        .putBoolean("show_raw", prefs.showRaw)
+        .putBoolean("show_decoded", prefs.showDecoded)
+        .putBoolean("show_explanation", prefs.showExplanation)
+        .putString("main_airport", prefs.mainAirportIcao.uppercase())
+        .apply()
+}
+
