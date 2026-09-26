@@ -41,6 +41,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontFamily
@@ -180,45 +181,53 @@ internal fun HomeScreenFinalV(
         focus.clearFocus()
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 36.dp)
-    ) {
-        item {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(if (showResults) 350.dp else 540.dp)
-                    .background(YcVoid)
-            ) {
-                // Keep the MapLibre surface untouched. Applying Compose blur/alpha directly
-                // to AndroidView can blank hardware-rendered maps on some devices.
-                NativeAviationMapV2(
-                    center = activeAirport,
-                    zoom = 7.0,
-                    interactive = false,
-                    chartsGeoJson = charts,
-                    modifier = Modifier.fillMaxSize()
-                )
+    Box(Modifier.fillMaxSize().background(YcVoid)) {
+        // The airport context now covers the complete Home surface. There is no
+        // separate fixed-height map header, so an empty black area cannot appear.
+        NativeAviationMapV2(
+            center = activeAirport,
+            zoom = 7.0,
+            interactive = false,
+            chartsGeoJson = charts,
+            modifier = Modifier.fillMaxSize()
+        )
 
-                // Visual softening is done with a translucent scrim instead of blurring MapView.
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .background(
-                            YcVoid.copy(
-                                alpha = when {
-                                    searchFocused -> 0.34f
-                                    showResults -> 0.28f
-                                    else -> 0.14f
-                                }
+        // MapLibre is left hardware-rendered and untouched. A soft translucent
+        // veil provides the blur/dim impression without blanking MapView on Samsung.
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        colors = when {
+                            searchFocused -> listOf(
+                                YcVoid.copy(alpha = 0.22f),
+                                YcVoid.copy(alpha = 0.38f),
+                                YcVoid.copy(alpha = 0.48f)
                             )
-                        )
+                            showResults -> listOf(
+                                YcVoid.copy(alpha = 0.18f),
+                                YcVoid.copy(alpha = 0.34f),
+                                YcVoid.copy(alpha = 0.54f)
+                            )
+                            else -> listOf(
+                                YcVoid.copy(alpha = 0.10f),
+                                YcVoid.copy(alpha = 0.16f),
+                                YcVoid.copy(alpha = 0.22f)
+                            )
+                        }
+                    )
                 )
+        )
 
-                Column(Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 42.dp)
+        ) {
+            item {
+                Column(Modifier.fillMaxWidth()) {
                     BrandBarV()
-                    Spacer(Modifier.height(if (showResults) 50.dp else 98.dp))
+                    Spacer(Modifier.height(if (showResults) 42.dp else 104.dp))
 
                     Column(
                         Modifier
@@ -257,9 +266,9 @@ internal fun HomeScreenFinalV(
                                         store.setFavorite(activeAirport, next, prefs.mainAirportIcao)
                                     }
                                 },
-                                color = YcSurface.copy(alpha = 0.82f),
-                                border = BorderStroke(1.dp, YcHairline),
-                                shape = RoundedCornerShape(7.dp)
+                                color = YcSurface.copy(alpha = 0.70f),
+                                border = BorderStroke(1.dp, YcHairline.copy(alpha = 0.75f)),
+                                shape = RoundedCornerShape(8.dp)
                             ) {
                                 Icon(
                                     if (favorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
@@ -272,41 +281,51 @@ internal fun HomeScreenFinalV(
 
                         Spacer(Modifier.height(18.dp))
 
-                        OutlinedTextField(
-                            value = query,
-                            onValueChange = {
-                                query = it
-                                if (!it.equals(activeAirport.icao, true)) showResults = false
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .onFocusChanged {
-                                    searchFocused = it.isFocused
-                                    if (!it.isFocused) searchBusy = false
-                                },
-                            singleLine = true,
-                            placeholder = {
-                                Text("Search METAR by ICAO, IATA or city", color = YcMuted)
-                            },
-                            leadingIcon = { Icon(Icons.Outlined.Search, null, tint = YcCyan) },
-                            trailingIcon = {
-                                if (searchBusy) Text("…", color = YcCyan, fontSize = 18.sp)
-                            },
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                            keyboardActions = KeyboardActions(
-                                onSearch = { matches.firstOrNull()?.let(::selectAirport) }
+                        Surface(
+                            color = YcSurface.copy(alpha = if (searchFocused) 0.82f else 0.66f),
+                            border = BorderStroke(
+                                1.dp,
+                                if (searchFocused) YcCyan.copy(alpha = 0.85f)
+                                else YcHairline.copy(alpha = 0.86f)
                             ),
-                            shape = RoundedCornerShape(8.dp)
-                        )
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = query,
+                                onValueChange = {
+                                    query = it
+                                    if (!it.equals(activeAirport.icao, true)) showResults = false
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .onFocusChanged {
+                                        searchFocused = it.isFocused
+                                        if (!it.isFocused) searchBusy = false
+                                    },
+                                singleLine = true,
+                                placeholder = {
+                                    Text("Search METAR by ICAO, IATA or city", color = YcMuted)
+                                },
+                                leadingIcon = { Icon(Icons.Outlined.Search, null, tint = YcCyan) },
+                                trailingIcon = {
+                                    if (searchBusy) Text("…", color = YcCyan, fontSize = 18.sp)
+                                },
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                                keyboardActions = KeyboardActions(
+                                    onSearch = { matches.firstOrNull()?.let(::selectAirport) }
+                                ),
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                        }
 
                         if (searchFocused && query.trim().length >= 2 && !showResults) {
                             Surface(
-                                color = YcSurface.copy(alpha = 0.98f),
-                                border = BorderStroke(1.dp, YcHairline),
-                                shape = RoundedCornerShape(8.dp),
+                                color = YcSurface.copy(alpha = 0.92f),
+                                border = BorderStroke(1.dp, YcHairline.copy(alpha = 0.9f)),
+                                shape = RoundedCornerShape(9.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(top = 5.dp)
+                                    .padding(top = 6.dp)
                             ) {
                                 when {
                                     searchBusy && matches.isEmpty() -> Text(
@@ -371,64 +390,78 @@ internal fun HomeScreenFinalV(
                             }
                         }
                     }
+
+                    if (!showResults) {
+                        // Keeps the search composition naturally centred while the full map
+                        // remains visible through the entire rest of the screen.
+                        Spacer(Modifier.height(320.dp))
+                    }
                 }
             }
-        }
 
-        if (showResults) {
-            item {
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 18.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                activeAirport.icao + (activeAirport.iata?.let { " / $it" } ?: ""),
-                                color = YcText,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 20.sp
-                            )
-                            Text(activeAirport.name, color = YcMuted, fontSize = 11.sp)
+            if (showResults) {
+                item {
+                    Spacer(Modifier.height(24.dp))
+                    Surface(
+                        color = YcSurface.copy(alpha = 0.80f),
+                        border = BorderStroke(1.dp, YcHairline.copy(alpha = 0.68f)),
+                        shape = RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 18.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        activeAirport.icao + (activeAirport.iata?.let { " / $it" } ?: ""),
+                                        color = YcText,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 20.sp
+                                    )
+                                    Text(activeAirport.name, color = YcMuted, fontSize = 11.sp)
+                                }
+                                TextButton(onClick = { refreshToken++ }) {
+                                    Icon(Icons.Outlined.Refresh, null, tint = YcCyan)
+                                    Spacer(Modifier.width(5.dp))
+                                    Text("REFRESH", color = YcCyan, fontSize = 9.sp)
+                                }
+                            }
+
+                            if (loading && weather == null) {
+                                Spacer(Modifier.height(14.dp))
+                                Text("Loading weather…", color = YcMuted, fontSize = 12.sp)
+                            }
+                            error?.let {
+                                Spacer(Modifier.height(12.dp))
+                                ErrorBoxV(it)
+                            }
+
+                            weather?.let { wx ->
+                                Spacer(Modifier.height(20.dp))
+                                WeatherSectionV(
+                                    title = "METAR",
+                                    product = wx.metar,
+                                    decoded = AviationDecoder.decodeMetar(wx.metar.raw),
+                                    explanation = AviationDecoder.explainMetar(wx.metar.raw),
+                                    prefs = prefs,
+                                    cachedAtMs = weatherCachedAt,
+                                    live = weatherLive
+                                )
+                                WeatherSectionV(
+                                    title = "TAF",
+                                    product = wx.taf,
+                                    decoded = AviationDecoder.decodeTaf(wx.taf.raw),
+                                    explanation = AviationDecoder.explainTaf(wx.taf.raw),
+                                    prefs = prefs,
+                                    cachedAtMs = weatherCachedAt,
+                                    live = weatherLive
+                                )
+                            }
                         }
-                        TextButton(onClick = { refreshToken++ }) {
-                            Icon(Icons.Outlined.Refresh, null, tint = YcCyan)
-                            Spacer(Modifier.width(5.dp))
-                            Text("REFRESH", color = YcCyan, fontSize = 9.sp)
-                        }
-                    }
-
-                    if (loading && weather == null) {
-                        Spacer(Modifier.height(14.dp))
-                        Text("Loading weather…", color = YcMuted, fontSize = 12.sp)
-                    }
-                    error?.let {
-                        Spacer(Modifier.height(12.dp))
-                        ErrorBoxV(it)
-                    }
-
-                    weather?.let { wx ->
-                        Spacer(Modifier.height(20.dp))
-                        WeatherSectionV(
-                            title = "METAR",
-                            product = wx.metar,
-                            decoded = AviationDecoder.decodeMetar(wx.metar.raw),
-                            explanation = AviationDecoder.explainMetar(wx.metar.raw),
-                            prefs = prefs,
-                            cachedAtMs = weatherCachedAt,
-                            live = weatherLive
-                        )
-                        WeatherSectionV(
-                            title = "TAF",
-                            product = wx.taf,
-                            decoded = AviationDecoder.decodeTaf(wx.taf.raw),
-                            explanation = AviationDecoder.explainTaf(wx.taf.raw),
-                            prefs = prefs,
-                            cachedAtMs = weatherCachedAt,
-                            live = weatherLive
-                        )
                     }
                 }
             }
