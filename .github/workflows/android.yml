@@ -35,19 +35,12 @@ jobs:
         with:
           gradle-version: "9.6.0"
 
-      - name: Restore stable debug signing key
-        uses: actions/cache@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: yulcaribe-debug-keystore-v1
-
-      - name: Create debug signing key if missing
+      - name: Restore pinned debug signing key
         shell: bash
         run: |
           mkdir -p "$HOME/.android"
-          if [ ! -f "$HOME/.android/debug.keystore" ]; then
-            keytool -genkeypair -v               -keystore "$HOME/.android/debug.keystore"               -storepass android               -alias androiddebugkey               -keypass android               -keyalg RSA               -keysize 2048               -validity 10000               -dname "CN=YulCaribe Debug,O=YulCaribe,C=TR"
-          fi
+          base64 --decode ci/debug.keystore.b64 > "$HOME/.android/debug.keystore"
+          chmod 600 "$HOME/.android/debug.keystore"
 
       - name: Download pinned GRIB2Tools
         shell: bash
