@@ -123,7 +123,12 @@ data class ModelWindPoint(
     val directionDeg: Double,
     val speedKt: Double,
     val progress: Double,
-    val etaUtc: String? = null
+    val etaUtc: String? = null,
+    val tailwindKt: Double? = null,
+    val crosswindKt: Double? = null,
+    val temperatureC: Double? = null,
+    val relativeHumidity: Double? = null,
+    val geopotentialHeightM: Double? = null
 )
 
 data class Viewport(
