@@ -350,21 +350,32 @@ private fun setupV2(style: Style) {
             .withFilter(Expression.eq(Expression.get("kind"), Expression.literal("wind")))
             .withProperties(
                 circleColor("#071019"),
-                circleRadius(4.0f),
+                circleRadius(3.8f),
                 circleStrokeColor("#31e4ff"),
                 circleStrokeWidth(1.2f)
             )
     )
     style.addLayer(
-        SymbolLayer("v2-wind-label", V2_BRIEF)
+        SymbolLayer("v2-wind-arrow", V2_BRIEF)
             .withFilter(Expression.eq(Expression.get("kind"), Expression.literal("wind")))
             .withProperties(
-                textField(Expression.get("label")),
-                textSize(12.0f),
+                textField("↑"),
+                textSize(18.0f),
                 textColor("#31e4ff"),
                 textHaloColor("#071019"),
-                textHaloWidth(1.5f),
+                textHaloWidth(1.7f),
                 textRotate(Expression.get("rotation"))
+            )
+    )
+    style.addLayer(
+        SymbolLayer("v2-wind-speed", V2_BRIEF)
+            .withFilter(Expression.eq(Expression.get("kind"), Expression.literal("wind")))
+            .withProperties(
+                textField(Expression.get("speedLabel")),
+                textSize(9.0f),
+                textColor("#f4f8fb"),
+                textHaloColor("#071019"),
+                textHaloWidth(1.4f)
             )
     )
 
