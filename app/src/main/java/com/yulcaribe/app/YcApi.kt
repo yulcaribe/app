@@ -25,6 +25,30 @@ object YcApi {
         }
     )
 
+    private val airportDetailCache = java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<String, Pair<Long, Airport>>(64, 0.75f, true) {
+            override fun removeEldestEntry(
+                eldest: MutableMap.MutableEntry<String, Pair<Long, Airport>>?
+            ): Boolean = size > 64
+        }
+    )
+
+    private val weatherCache = java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<String, Pair<Long, WeatherBundle>>(32, 0.75f, true) {
+            override fun removeEldestEntry(
+                eldest: MutableMap.MutableEntry<String, Pair<Long, WeatherBundle>>?
+            ): Boolean = size > 32
+        }
+    )
+
+    private val chartCache = java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<String, Pair<Long, String>>(48, 0.75f, true) {
+            override fun removeEldestEntry(
+                eldest: MutableMap.MutableEntry<String, Pair<Long, String>>?
+            ): Boolean = size > 48
+        }
+    )
+
     private val localAirportFallbacks = listOf(
         Airport(0, "LTAI", "AYT", "Antalya Airport", "Antalya", 36.8987, 30.8005, 177),
         Airport(0, "LTFM", "IST", "Istanbul Airport", "Istanbul", 41.2753, 28.7519, 325),
@@ -60,7 +84,7 @@ object YcApi {
         connection.readTimeout = 28_000
         connection.useCaches = false
         connection.setRequestProperty("Accept", accept)
-        connection.setRequestProperty("User-Agent", "YulCaribe-Android/0.2")
+        connection.setRequestProperty("User-Agent", "YulCaribe-Android/0.3")
 
         val code = connection.responseCode
         val input = if (code in 200..299) connection.inputStream else connection.errorStream
@@ -156,14 +180,27 @@ object YcApi {
 
     suspend fun airportDetail(ident: String): Airport = withContext(Dispatchers.IO) {
         val normalized = normalizeAirportQuery(ident).trim().uppercase()
-        localAirportFallbacks.firstOrNull {
+        airportDetailCache[normalized]?.let { (at, airport) ->
+            if (System.currentTimeMillis() - at < 3_600_000L) return@withContext airport
+        }
+
+        val local = localAirportFallbacks.firstOrNull {
             it.icao == normalized || it.iata?.uppercase() == normalized
-        }?.let { return@withContext it }
+        }
+        if (local != null) {
+            airportDetailCache[normalized] = System.currentTimeMillis() to local
+            return@withContext local
+        }
 
         val json = httpJson(
             BASE + "/navdata.php?action=airport-detail&ident=" + enc(normalized)
         )
-        parseAirport(json.getJSONObject("airport"))
+        val airport = parseAirport(json.getJSONObject("airport"))
+        airportDetailCache[normalized] = System.currentTimeMillis() to airport
+        airport.iata?.uppercase()?.let {
+            airportDetailCache[it] = System.currentTimeMillis() to airport
+        }
+        airport
     }
 
     private fun parseAirports(array: JSONArray?): List<Airport> {
@@ -189,14 +226,21 @@ object YcApi {
         )
 
     suspend fun weather(icao: String): WeatherBundle = withContext(Dispatchers.IO) {
-        val json = httpJson(BASE + "/weather.php?icao=" + enc(icao.uppercase()))
-        WeatherBundle(
-            icao = json.optString("icao", icao.uppercase()),
+        val key = icao.uppercase()
+        weatherCache[key]?.let { (at, bundle) ->
+            if (System.currentTimeMillis() - at < 90_000L) return@withContext bundle
+        }
+
+        val json = httpJson(BASE + "/weather.php?icao=" + enc(key))
+        val bundle = WeatherBundle(
+            icao = json.optString("icao", key),
             source = json.optString("source", "AviationWeather.gov"),
             fetchedAt = json.optNullableString("fetchedAt"),
             metar = parseWeatherProduct(json.optJSONObject("metar")),
             taf = parseWeatherProduct(json.optJSONObject("taf"))
         )
+        weatherCache[key] = System.currentTimeMillis() to bundle
+        bundle
     }
 
     private fun parseWeatherProduct(row: JSONObject?): WeatherProduct {
@@ -264,15 +308,30 @@ object YcApi {
         layers: Set<String>
     ): String = withContext(Dispatchers.IO) {
         if (layers.isEmpty()) return@withContext emptyFeatureCollection()
+        val layerKey = layers.sorted().joinToString(",")
+        val cacheKey = listOf(
+            viewport.zoom.coerceIn(0, 18).toString(),
+            String.format(java.util.Locale.US, "%.2f", viewport.west),
+            String.format(java.util.Locale.US, "%.2f", viewport.south),
+            String.format(java.util.Locale.US, "%.2f", viewport.east),
+            String.format(java.util.Locale.US, "%.2f", viewport.north),
+            layerKey
+        ).joinToString("|")
+        chartCache[cacheKey]?.let { (at, geo) ->
+            if (System.currentTimeMillis() - at < 120_000L) return@withContext geo
+        }
+
         val url = BASE + "/navdata.php?action=viewport" +
             "&z=" + viewport.zoom.coerceIn(0, 18) +
             "&west=" + viewport.west +
             "&south=" + viewport.south +
             "&east=" + viewport.east +
             "&north=" + viewport.north +
-            "&layers=" + enc(layers.joinToString(","))
+            "&layers=" + enc(layerKey)
         val json = httpJson(url)
-        json.optJSONObject("data")?.toString() ?: emptyFeatureCollection()
+        val geo = json.optJSONObject("data")?.toString() ?: emptyFeatureCollection()
+        chartCache[cacheKey] = System.currentTimeMillis() to geo
+        geo
     }
 
     suspend fun notamViewport(
