@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -34,6 +35,8 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -63,6 +66,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -76,6 +80,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.PopupProperties
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -236,6 +241,7 @@ private fun HomeScreen(prefs: AppPreferences) {
     var query by rememberSaveable { mutableStateOf("") }
     var matches by remember { mutableStateOf<List<Airport>>(emptyList()) }
     var searchBusy by remember { mutableStateOf(false) }
+    var searchFocused by remember { mutableStateOf(false) }
     var searchGeneration by remember { mutableIntStateOf(0) }
     var showResults by rememberSaveable { mutableStateOf(false) }
     var weather by remember { mutableStateOf<WeatherBundle?>(null) }
@@ -251,10 +257,11 @@ private fun HomeScreen(prefs: AppPreferences) {
             ?.let { activeAirport = it }
     }
 
-    LaunchedEffect(query) {
+    LaunchedEffect(query, searchFocused) {
+        if (!searchFocused) return@LaunchedEffect
         val typed = query.trim()
         val normalized = YcApi.normalizeAirportQuery(typed)
-        if (normalized.length < 2 || normalized.equals(activeAirport.icao, true)) {
+        if (normalized.length < 2) {
             matches = emptyList()
             searchBusy = false
             return@LaunchedEffect
@@ -262,9 +269,9 @@ private fun HomeScreen(prefs: AppPreferences) {
 
         val generation = ++searchGeneration
         searchBusy = true
-        delay(220)
+        delay(140)
 
-        val result = runCatching { YcApi.airportSearch(normalized, 8) }
+        val result = runCatching { YcApi.airportSearch(normalized, 20) }
             .getOrDefault(emptyList())
 
         if (generation == searchGeneration && query.trim() == typed) {
@@ -304,6 +311,7 @@ private fun HomeScreen(prefs: AppPreferences) {
         matches = emptyList()
         weather = null
         showResults = true
+        searchFocused = false
         focus.clearFocus()
     }
 
@@ -372,69 +380,88 @@ private fun HomeScreen(prefs: AppPreferences) {
                         }
                         Spacer(Modifier.height(14.dp))
 
-                        OutlinedTextField(
-                            value = query,
-                            onValueChange = {
-                                query = it.uppercase()
-                                if (!it.equals(activeAirport.icao, true)) showResults = false
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            placeholder = {
-                                Text("Airport / ICAO / IATA / city", color = YcMuted)
-                            },
-                            leadingIcon = { Icon(Icons.Outlined.Search, null, tint = YcCyan) },
-                            trailingIcon = {
-                                if (searchBusy) Text("…", color = YcCyan, fontSize = 18.sp)
-                            },
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                            keyboardActions = KeyboardActions(
-                                onSearch = { matches.firstOrNull()?.let(::selectAirport) }
-                            ),
-                            shape = RoundedCornerShape(8.dp)
-                        )
-
-                        AnimatedVisibility(matches.isNotEmpty() && !showResults) {
-                            Column(
-                                Modifier
+                        Box(Modifier.fillMaxWidth()) {
+                            OutlinedTextField(
+                                value = query,
+                                onValueChange = {
+                                    query = it.uppercase()
+                                    if (!it.equals(activeAirport.icao, true)) showResults = false
+                                },
+                                modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(top = 6.dp)
-                                    .background(Color(0xF20B1016), RoundedCornerShape(7.dp))
-                                    .border(1.dp, YcHairline, RoundedCornerShape(7.dp))
+                                    .onFocusChanged {
+                                        searchFocused = it.isFocused
+                                        if (!it.isFocused) searchBusy = false
+                                    },
+                                singleLine = true,
+                                placeholder = {
+                                    Text("Airport / ICAO / IATA / city", color = YcMuted)
+                                },
+                                leadingIcon = { Icon(Icons.Outlined.Search, null, tint = YcCyan) },
+                                trailingIcon = {
+                                    if (searchBusy) Text("…", color = YcCyan, fontSize = 18.sp)
+                                },
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                                keyboardActions = KeyboardActions(
+                                    onSearch = { matches.firstOrNull()?.let(::selectAirport) }
+                                ),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+
+                            DropdownMenu(
+                                expanded = searchFocused && query.trim().length >= 2 && !showResults,
+                                onDismissRequest = { searchFocused = false },
+                                modifier = Modifier
+                                    .fillMaxWidth(0.94f)
+                                    .heightIn(max = 300.dp)
+                                    .background(Color(0xFF0B1016)),
+                                properties = PopupProperties(focusable = false)
                             ) {
-                                matches.forEachIndexed { index, airport ->
-                                    Row(
-                                        Modifier
-                                            .fillMaxWidth()
-                                            .clickable { selectAirport(airport) }
-                                            .padding(horizontal = 14.dp, vertical = 11.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(Modifier.width(72.dp)) {
-                                            Text(
-                                                airport.icao,
-                                                color = YcCyan,
-                                                fontFamily = FontFamily.Monospace,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                            airport.iata?.let {
-                                                Text(it, color = YcMuted, fontSize = 9.sp)
-                                            }
-                                        }
-                                        Column(Modifier.weight(1f)) {
-                                            Text(
-                                                airport.name,
-                                                color = YcText,
-                                                fontSize = 12.sp,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            airport.city?.let {
-                                                Text(it, color = YcMuted, fontSize = 10.sp)
-                                            }
-                                        }
+                                if (searchBusy && matches.isEmpty()) {
+                                    DropdownMenuItem(
+                                        text = { Text("Searching…", color = YcMuted) },
+                                        onClick = {}
+                                    )
+                                } else if (matches.isEmpty()) {
+                                    DropdownMenuItem(
+                                        text = { Text("No airport match.", color = YcMuted) },
+                                        onClick = {}
+                                    )
+                                } else {
+                                    matches.forEach { airport ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Column(Modifier.width(82.dp)) {
+                                                        Text(
+                                                            airport.icao,
+                                                            color = YcCyan,
+                                                            fontFamily = FontFamily.Monospace,
+                                                            fontWeight = FontWeight.Bold
+                                                        )
+                                                        airport.iata?.let {
+                                                            Text(it, color = YcMuted, fontSize = 9.sp)
+                                                        }
+                                                    }
+                                                    Column(Modifier.weight(1f)) {
+                                                        Text(
+                                                            airport.name,
+                                                            color = YcText,
+                                                            fontSize = 12.sp,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                        Text(
+                                                            airport.city ?: "",
+                                                            color = YcMuted,
+                                                            fontSize = 10.sp
+                                                        )
+                                                    }
+                                                }
+                                            },
+                                            onClick = { selectAirport(airport) }
+                                        )
                                     }
-                                    if (index != matches.lastIndex) HorizontalDivider(color = YcHairline)
                                 }
                             }
                         }
