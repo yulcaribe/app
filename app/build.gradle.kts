@@ -44,6 +44,7 @@ dependencies {
 
     // Same map engine family used by YulCaribe Main, but native Android.
     implementation("org.maplibre.gl:android-sdk:13.6.1")
+    implementation("com.github.luben:zstd-jni:1.5.7-4")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
