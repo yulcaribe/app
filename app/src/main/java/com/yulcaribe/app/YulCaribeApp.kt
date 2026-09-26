@@ -1400,6 +1400,8 @@ private fun NavMapScreen() {
     var timelineExpanded by rememberSaveable { mutableStateOf(false) }
     var wafsProduct by remember { mutableStateOf("edr") }
     var wafsFl by remember { mutableIntStateOf(340) }
+    var wafsOpacity by remember { mutableFloatStateOf(0.48f) }
+    val adsbBuffer = remember { AdsbTrackBuffer() }
 
     LaunchedEffect(Unit) {
         apiOk = YcApi.catalogOk()
@@ -1496,6 +1498,7 @@ private fun NavMapScreen() {
 
     LaunchedEffect(viewport, layers.adsb, refreshToken) {
         if (!layers.adsb) {
+            adsbBuffer.clear()
             flightsGeo = emptyGeoJson()
             adsbError = null
             adsbLoading = false
@@ -1507,7 +1510,7 @@ private fun NavMapScreen() {
                 adsbLoading = flightsGeo == emptyGeoJson()
                 runCatching { YcApi.adsb(viewport) }
                     .onSuccess {
-                        flightsGeo = YcApi.flightsGeoJson(it.aircraft)
+                        adsbBuffer.ingest(it)
                         adsbError = null
                         apiOk = true
                     }
@@ -1520,15 +1523,25 @@ private fun NavMapScreen() {
         }
     }
 
+    LaunchedEffect(layers.adsb) {
+        if (!layers.adsb) return@LaunchedEffect
+        while (true) {
+            val rendered = adsbBuffer.render()
+            if (rendered.isNotEmpty()) flightsGeo = YcApi.flightsGeoJson(rendered)
+            delay(80)
+        }
+    }
+
     Box(Modifier.fillMaxSize().background(YcVoid)) {
-        NativeAviationMap(
+        NativeAviationMapV2(
             center = centerAirport,
             zoom = 7.0,
             interactive = true,
             chartsGeoJson = chartGeo,
             notamGeoJson = notamGeo,
-            flightsGeoJson = flightsGeo,
+            aircraftGeoJson = flightsGeo,
             wafsFrame = wafsFrame,
+            wafsOpacity = wafsOpacity,
             onViewportChanged = { viewport = it },
             modifier = Modifier.fillMaxSize()
         )
@@ -1858,6 +1871,20 @@ private fun NavMapScreen() {
                             valueRange = 60f..450f
                         )
                     }
+
+                    Spacer(Modifier.height(8.dp))
+                    Kicker("OPACITY")
+                    Text(
+                        ((wafsOpacity * 100).toInt()).toString() + "%",
+                        color = YcText,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp
+                    )
+                    Slider(
+                        value = wafsOpacity,
+                        onValueChange = { wafsOpacity = it },
+                        valueRange = 0.10f..0.85f
+                    )
 
                     if (wafsError != null) {
                         Spacer(Modifier.height(12.dp))
