@@ -25,6 +25,7 @@ import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Remove
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
@@ -55,6 +56,7 @@ import java.time.temporal.ChronoUnit
 
 private enum class VMapPanel { Charts, Wafs }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun MapScreenV(
     prefs: VPreferences,
