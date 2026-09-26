@@ -141,8 +141,8 @@ fun YulCaribeAppVNext(
                 .padding(bottom = padding.calculateBottomPadding())
         ) {
             when (destination) {
-                VDestination.Home -> HomeScreenV(prefs, store)
-                VDestination.Map -> MapScreenV(prefs, ::updatePreferences)
+                VDestination.Home -> HomeScreenFinalV(prefs, store)
+                VDestination.Map -> MapScreenFinalV(prefs, ::updatePreferences)
                 VDestination.Notam -> NotamScreenV(prefs)
                 VDestination.Briefing -> BriefingScreenV(store)
                 VDestination.Settings -> SettingsScreenV(prefs, store, ::updatePreferences)
