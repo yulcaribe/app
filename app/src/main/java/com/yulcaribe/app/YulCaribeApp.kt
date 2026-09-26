@@ -27,12 +27,14 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.FlightTakeoff
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Map
+import androidx.compose.material.icons.outlined.OpenInFull
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
@@ -84,6 +86,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.PopupProperties
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -717,8 +721,6 @@ private fun BriefingScreen() {
     var requestToken by remember { mutableIntStateOf(0) }
     var loading by remember { mutableStateOf(false) }
     var briefing by remember { mutableStateOf<Briefing?>(null) }
-    var briefingCharts by remember { mutableStateOf(emptyGeoJson()) }
-    var briefingMapError by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) { apiOk = YcApi.catalogOk() }
@@ -743,15 +745,6 @@ private fun BriefingScreen() {
         if (data != null) {
             briefing = data
             apiOk = true
-
-            val mapResult = runCatching {
-                YcApi.chartViewport(
-                    routeViewport(data.route),
-                    setOf("airport", "airway")
-                )
-            }
-            briefingCharts = mapResult.getOrDefault(emptyGeoJson())
-            briefingMapError = mapResult.exceptionOrNull()?.message
         } else {
             error = result.exceptionOrNull()?.message ?: "Pilot Briefing request failed."
         }
@@ -830,11 +823,7 @@ private fun BriefingScreen() {
         briefing?.let { data ->
             item {
                 Column(Modifier.padding(horizontal = 20.dp)) {
-                    BriefingMap(
-                        points = data.route,
-                        chartsGeoJson = briefingCharts,
-                        error = briefingMapError
-                    )
+                    BriefingMap(data)
                     Spacer(Modifier.height(18.dp))
 
                     BriefingTable(
@@ -975,11 +964,50 @@ private fun BriefField(
 }
 
 @Composable
-private fun BriefingMap(
-    points: List<RoutePoint>,
-    chartsGeoJson: String,
-    error: String?
-) {
+private fun BriefingMap(data: Briefing) {
+    var fullScreen by remember { mutableStateOf(false) }
+    var layersOpen by remember { mutableStateOf(false) }
+    var showRoute by remember { mutableStateOf(true) }
+    var showStations by remember { mutableStateOf(true) }
+    var showSigmet by remember { mutableStateOf(true) }
+    var showCharts by remember { mutableStateOf(false) }
+    var showWafs by remember { mutableStateOf(false) }
+    var chartGeo by remember { mutableStateOf(emptyGeoJson()) }
+    var wafsFrame by remember { mutableStateOf<WafsFrame?>(null) }
+    var wafsProduct by remember { mutableStateOf("edr") }
+
+    LaunchedEffect(fullScreen, showCharts, data.route) {
+        chartGeo = if (fullScreen && showCharts) {
+            runCatching {
+                YcApi.chartViewport(
+                    routeViewport(data.route),
+                    setOf("airport", "navaid", "waypoint", "airway", "sid", "star", "airspace")
+                )
+            }.getOrDefault(emptyGeoJson())
+        } else {
+            emptyGeoJson()
+        }
+    }
+
+    LaunchedEffect(fullScreen, showWafs, wafsProduct, data.cruiseFl, data.etdUtc, data.estimatedArrivalUtc) {
+        if (!fullScreen || !showWafs) {
+            wafsFrame = null
+            return@LaunchedEffect
+        }
+        val startUtc = data.etdUtc?.let { runCatching { Instant.parse(it) }.getOrNull() } ?: Instant.now()
+        val endUtc = data.estimatedArrivalUtc?.let { runCatching { Instant.parse(it) }.getOrNull() } ?: startUtc
+        val mid = startUtc.plusMillis(
+            kotlin.math.max(0L, endUtc.toEpochMilli() - startUtc.toEpochMilli()) / 2L
+        )
+        wafsFrame = runCatching {
+            YcApi.wafsFrame(
+                wafsProduct,
+                nearestSupportedWafsLevel(wafsProduct, data.cruiseFl),
+                mid
+            )
+        }.getOrNull()
+    }
+
     Box(
         Modifier
             .fillMaxWidth()
@@ -987,16 +1015,14 @@ private fun BriefingMap(
             .background(Color(0xFF071017), RoundedCornerShape(6.dp))
             .border(1.dp, YcHairline, RoundedCornerShape(6.dp))
     ) {
-        NativeAviationMap(
+        NativeAviationMapV2(
             center = null,
             zoom = 4.0,
-            interactive = true,
-            chartsGeoJson = chartsGeoJson,
-            notamGeoJson = emptyGeoJson(),
-            flightsGeoJson = emptyGeoJson(),
-            routeGeoJson = routeGeoJson(points),
-            routePoints = points,
-            wafsFrame = null,
+            interactive = false,
+            routeGeoJson = routeGeoJson(data.route),
+            briefingGeoJson = briefingOverlayGeoJson(data, true, true),
+            routePoints = data.route,
+            fitRoute = true,
             modifier = Modifier.fillMaxSize()
         )
 
@@ -1009,7 +1035,7 @@ private fun BriefingMap(
                 .padding(10.dp)
         ) {
             Text(
-                "LIVE ROUTE MAP",
+                "ROUTE · SIGMET · STATIONS",
                 color = YcCyan,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 9.sp,
@@ -1017,25 +1043,205 @@ private fun BriefingMap(
             )
         }
 
-        if (error != null) {
-            Surface(
-                color = YcRed.copy(alpha = 0.88f),
-                shape = RoundedCornerShape(4.dp),
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(10.dp)
+        Surface(
+            onClick = { fullScreen = true },
+            color = Color(0xE60B1016),
+            border = androidx.compose.foundation.BorderStroke(1.dp, YcHairline),
+            shape = RoundedCornerShape(6.dp),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(10.dp)
+        ) {
+            Row(
+                Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                Icon(
+                    Icons.Outlined.OpenInFull,
+                    contentDescription = "Expand route map",
+                    tint = YcCyan,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(5.dp))
                 Text(
-                    "CHARTS · " + error,
+                    "EXPAND",
                     color = YcText,
                     fontFamily = FontFamily.Monospace,
-                    fontSize = 8.sp,
-                    maxLines = 2,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                    fontSize = 8.sp
                 )
             }
         }
     }
+
+    if (fullScreen) {
+        Dialog(
+            onDismissRequest = { fullScreen = false },
+            properties = DialogProperties(
+                usePlatformDefaultWidth = false,
+                decorFitsSystemWindows = false
+            )
+        ) {
+            Box(Modifier.fillMaxSize().background(YcVoid)) {
+                NativeAviationMapV2(
+                    center = null,
+                    zoom = 4.0,
+                    interactive = true,
+                    chartsGeoJson = chartGeo,
+                    routeGeoJson = if (showRoute) routeGeoJson(data.route) else emptyGeoJson(),
+                    briefingGeoJson = briefingOverlayGeoJson(data, showStations, showSigmet),
+                    routePoints = data.route,
+                    fitRoute = true,
+                    wafsFrame = wafsFrame,
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        onClick = { fullScreen = false },
+                        color = Color(0xEC0B1016),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, YcHairline),
+                        shape = RoundedCornerShape(7.dp)
+                    ) {
+                        Icon(
+                            Icons.Outlined.Close,
+                            contentDescription = "Close map",
+                            tint = YcText,
+                            modifier = Modifier.padding(10.dp).size(20.dp)
+                        )
+                    }
+
+                    Spacer(Modifier.weight(1f))
+
+                    Surface(
+                        onClick = { layersOpen = !layersOpen },
+                        color = Color(0xEC0B1016),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, YcHairline),
+                        shape = RoundedCornerShape(7.dp)
+                    ) {
+                        Row(
+                            Modifier.padding(horizontal = 11.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Outlined.Layers,
+                                contentDescription = null,
+                                tint = YcCyan,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                "LAYERS",
+                                color = YcText,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 9.sp
+                            )
+                        }
+                    }
+                }
+
+                if (layersOpen) {
+                    Column(
+                        Modifier
+                            .align(Alignment.TopEnd)
+                            .statusBarsPadding()
+                            .padding(top = 68.dp, end = 12.dp)
+                            .width(270.dp)
+                            .background(Color(0xF50B1016), RoundedCornerShape(9.dp))
+                            .border(1.dp, YcHairline, RoundedCornerShape(9.dp))
+                            .padding(14.dp)
+                    ) {
+                        Text(
+                            "BRIEFING LAYERS",
+                            color = YcText,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.height(9.dp))
+                        LayerToggle("Route", showRoute) { showRoute = it }
+                        LayerToggle("Stations", showStations) { showStations = it }
+                        LayerToggle("SIGMET", showSigmet) { showSigmet = it }
+                        LayerToggle("Charts", showCharts) { showCharts = it }
+                        LayerToggle("WAFS", showWafs) { showWafs = it }
+
+                        if (showWafs) {
+                            Spacer(Modifier.height(8.dp))
+                            Row(
+                                Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                listOf(
+                                    "edr" to "EDR",
+                                    "icing" to "ICE",
+                                    "cbextent" to "CB",
+                                    "wind" to "WIND"
+                                ).forEach { item ->
+                                    OptionChip(
+                                        label = item.second,
+                                        selected = wafsProduct == item.first,
+                                        onClick = { wafsProduct = item.first }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun briefingOverlayGeoJson(
+    data: Briefing,
+    includeStations: Boolean,
+    includeHazards: Boolean
+): String {
+    val features = JSONArray()
+
+    if (includeStations) {
+        data.stations.forEach { station ->
+            val lat = station.lat ?: return@forEach
+            val lon = station.lon ?: return@forEach
+            features.put(
+                JSONObject()
+                    .put("type", "Feature")
+                    .put(
+                        "geometry",
+                        JSONObject()
+                            .put("type", "Point")
+                            .put("coordinates", JSONArray().put(lon).put(lat))
+                    )
+                    .put(
+                        "properties",
+                        JSONObject()
+                            .put("kind", "station")
+                            .put("label", station.icao)
+                            .put("role", station.role)
+                    )
+            )
+        }
+    }
+
+    if (includeHazards) {
+        data.hazards.forEach { hazard ->
+            val raw = hazard.featureJson ?: return@forEach
+            val feature = runCatching { JSONObject(raw) }.getOrNull() ?: return@forEach
+            val props = feature.optJSONObject("properties") ?: JSONObject()
+            props.put("kind", "hazard")
+            props.put("hazard", hazard.hazard)
+            feature.put("properties", props)
+            features.put(feature)
+        }
+    }
+
+    return JSONObject()
+        .put("type", "FeatureCollection")
+        .put("features", features)
+        .toString()
 }
 
 @Composable
