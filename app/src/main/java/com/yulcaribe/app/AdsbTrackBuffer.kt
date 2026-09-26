@@ -80,7 +80,7 @@ class AdsbTrackBuffer {
                 }
             }
 
-            val a = before ?: return@mapNotNull null
+            val a = before ?: list.first()
             val b = after
             if (b == null || b === a || b.sourceTimeMs <= a.sourceTimeMs) {
                 return@mapNotNull a.aircraft
