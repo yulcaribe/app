@@ -42,6 +42,7 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("androidx.work:work-runtime-ktx:2.10.1")
 
     // Same map engine family used by YulCaribe Main, but native Android.
     implementation("org.maplibre.gl:android-sdk:13.6.1")
