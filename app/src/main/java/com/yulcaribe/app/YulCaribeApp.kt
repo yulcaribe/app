@@ -92,6 +92,8 @@ import androidx.compose.ui.window.PopupProperties
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import org.json.JSONArray
+import org.json.JSONObject
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import kotlin.math.asin
@@ -729,7 +731,6 @@ private fun BriefingScreen() {
         if (requestToken == 0) return@LaunchedEffect
         loading = true
         error = null
-        briefingMapError = null
 
         val result = runCatching {
             YcApi.briefing(
