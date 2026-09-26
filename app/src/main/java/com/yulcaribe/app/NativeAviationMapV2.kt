@@ -58,8 +58,10 @@ private const val V2_NOTAMS = "v2-notams"
 private const val V2_AIRCRAFT = "v2-aircraft"
 private const val V2_ROUTE = "v2-route"
 private const val V2_BRIEF = "v2-brief"
-private const val V2_WAFS = "v2-wafs"
-private const val V2_WAFS_LAYER = "v2-wafs-layer"
+private val V2_WAFS_PRODUCTS = listOf("edr", "icing", "cbextent", "cbtop", "wind")
+
+private fun v2WafsSource(product: String) = "v2-wafs-$product"
+private fun v2WafsLayer(product: String) = "v2-wafs-$product-layer"
 
 private const val V2_BASE_STYLE = """
 {
@@ -104,6 +106,8 @@ fun NativeAviationMapV2(
     fitRoute: Boolean = false,
     wafsFrame: WafsFrame? = null,
     wafsOpacity: Float = 0.48f,
+    wafsFrames: List<WafsFrame> = emptyList(),
+    wafsOpacities: Map<String, Float> = emptyMap(),
     onViewportChanged: (Viewport) -> Unit = {}
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -211,40 +215,48 @@ fun NativeAviationMapV2(
         }
     }
 
-    LaunchedEffect(wafsFrame, wafsOpacity, styleReady) {
+    LaunchedEffect(wafsFrame, wafsOpacity, wafsFrames, wafsOpacities, styleReady) {
         if (!styleReady) return@LaunchedEffect
         mapRef?.getStyle { style ->
-            if (wafsFrame == null) {
-                if (style.getLayer(V2_WAFS_LAYER) != null) style.removeLayer(V2_WAFS_LAYER)
-                if (style.getSource(V2_WAFS) != null) style.removeSource(V2_WAFS)
-                return@getStyle
+            val effectiveFrames = if (wafsFrames.isNotEmpty()) wafsFrames else listOfNotNull(wafsFrame)
+            val activeProducts = effectiveFrames.map { it.product }.toSet()
+
+            V2_WAFS_PRODUCTS.forEach { product ->
+                if (product !in activeProducts) {
+                    val layerId = v2WafsLayer(product)
+                    val sourceId = v2WafsSource(product)
+                    if (style.getLayer(layerId) != null) style.removeLayer(layerId)
+                    if (style.getSource(sourceId) != null) style.removeSource(sourceId)
+                }
             }
 
-            val bitmap = BitmapFactory.decodeByteArray(wafsFrame.png, 0, wafsFrame.png.size)
-                ?: return@getStyle
-            val maxLat = wafsFrame.maxLatitude.coerceIn(0.0, 85.0511)
-            val quad = LatLngQuad(
-                LatLng(maxLat, -180.0),
-                LatLng(maxLat, 180.0),
-                LatLng(-maxLat, 180.0),
-                LatLng(-maxLat, -180.0)
-            )
+            effectiveFrames.forEach { frame ->
+                val product = frame.product
+                val sourceId = v2WafsSource(product)
+                val layerId = v2WafsLayer(product)
+                val opacity = (wafsOpacities[product] ?: wafsOpacity).coerceIn(0.08f, 0.95f)
+                val bitmap = BitmapFactory.decodeByteArray(frame.png, 0, frame.png.size)
+                    ?: return@forEach
+                val maxLat = frame.maxLatitude.coerceIn(0.0, 85.0511)
+                val quad = LatLngQuad(
+                    LatLng(maxLat, -180.0),
+                    LatLng(maxLat, 180.0),
+                    LatLng(-maxLat, 180.0),
+                    LatLng(-maxLat, -180.0)
+                )
 
-            val existing = style.getSource(V2_WAFS) as? ImageSource
-            if (existing != null) {
-                existing.setCoordinates(quad)
-                existing.setImage(bitmap)
-                style.getLayer(V2_WAFS_LAYER)?.setProperties(
-                    rasterOpacity(wafsOpacity.coerceIn(0.08f, 0.95f))
-                )
-            } else {
-                style.addSource(ImageSource(V2_WAFS, quad, bitmap))
-                style.addLayerAbove(
-                    RasterLayer(V2_WAFS_LAYER, V2_WAFS).withProperties(
-                        rasterOpacity(wafsOpacity.coerceIn(0.08f, 0.95f))
-                    ),
-                    "osm-base"
-                )
+                val existing = style.getSource(sourceId) as? ImageSource
+                if (existing != null) {
+                    existing.setCoordinates(quad)
+                    existing.setImage(bitmap)
+                    style.getLayer(layerId)?.setProperties(rasterOpacity(opacity))
+                } else {
+                    style.addSource(ImageSource(sourceId, quad, bitmap))
+                    style.addLayerAbove(
+                        RasterLayer(layerId, sourceId).withProperties(rasterOpacity(opacity)),
+                        "osm-base"
+                    )
+                }
             }
         }
     }
@@ -437,7 +449,6 @@ private fun layerEqV2(name: String): Expression =
 
 private fun emptyGeoJsonV2(): String =
     """{"type":"FeatureCollection","features":[]}"""
-
 
 private fun aircraftBitmapV2(): Bitmap {
     val size = 64
